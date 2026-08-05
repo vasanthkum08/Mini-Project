@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #f4f6f8;
+    color: #1e293b;
+    font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Custom CSS animations and premium variables */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseGlow {
+  0% {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.2), 0 0 20px rgba(245, 158, 11, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(59, 130, 246, 0.45), 0 0 35px rgba(245, 158, 11, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.2), 0 0 20px rgba(245, 158, 11, 0.1);
+  }
+}
+
+.recommended-hospital-glow {
+  animation: pulseGlow 3s infinite ease-in-out;
+}
+
+/* Custom animations for emergency mode */
+@keyframes redBorderBlink {
+  0%, 100% {
+    border-color: rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    border-color: rgba(220, 38, 38, 1);
+  }
+}
+
+.emergency-border-blink {
+  animation: redBorderBlink 1.5s infinite ease-in-out;
+}
+
+@keyframes textBlink {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.emergency-text-blink {
+  animation: textBlink 1.2s infinite ease-in-out;
+}
+
+@keyframes redGlowPulse {
+  0%, 100% {
+    box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.04), 0 0 10px rgba(239, 68, 68, 0.15);
+  }
+  50% {
+    box-shadow: 0 20px 35px -8px rgba(15, 23, 42, 0.08), 0 0 25px rgba(239, 68, 68, 0.45);
+  }
+}
+
+.emergency-glow-pulse {
+  animation: redGlowPulse 2s infinite ease-in-out;
+}
+
+@keyframes sirenPulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.3));
+  }
+  50% {
+    transform: scale(1.15);
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.8));
+  }
+}
+
+.emergency-siren-pulse {
+  animation: sirenPulse 0.8s infinite ease-in-out;
+}
+
+/* Premium healthcare card shadow layouts */
+.healthcare-card-shadow {
+  box-shadow: 0 8px 30px -4px rgba(15, 23, 42, 0.04), 0 4px 12px -2px rgba(15, 23, 42, 0.02);
+}
+
+.healthcare-card-hover {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.healthcare-card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -8px rgba(15, 23, 42, 0.08), 0 8px 16px -4px rgba(15, 23, 42, 0.03);
+}
+
+/* Custom scroll bar styling */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

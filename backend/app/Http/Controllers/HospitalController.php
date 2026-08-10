@@ -18,8 +18,9 @@ class HospitalController extends Controller
         $lng = $request->input('longitude');
         $severity = $request->input('severity', 'Medium'); // Low, Medium, High
         $specialty = $request->input('specialty');
+        $geocodedAddress = null;
 
-        // Geocode manual details if coordinates are missing
+        // Geocode manual details if coordinates are missing — always fresh, never cached
         if ($lat === null || $lng === null) {
             $addressDetails = [
                 'state' => $request->input('state'),
@@ -38,6 +39,7 @@ class HospitalController extends Controller
                 }
                 $lat = $geoResult['latitude'];
                 $lng = $geoResult['longitude'];
+                $geocodedAddress = $geoResult['formatted_address'] ?? null;
             }
         }
 
@@ -59,99 +61,99 @@ class HospitalController extends Controller
 
         $hospitals = Hospital::all();
 
-        // 1. Process distances, ETAs and filter nearby hospitals (within 100km)
-        $processed = $hospitals->map(function ($hosp) use ($lat, $lng) {
-            // Calculate Haversine distance
+        // 1. Calculate distances for ALL hospitals and attach ETA
+        $withDistances = $hospitals->map(function ($hosp) use ($lat, $lng) {
             $distance = 6371 * acos(
-                cos(deg2rad($lat)) * cos(deg2rad($hosp->latitude)) *
-                cos(deg2rad($hosp->longitude) - deg2rad($lng)) +
-                sin(deg2rad($lat)) * sin(deg2rad($hosp->latitude))
-            );
-
-            // Dynamic ETA: 2 mins per km + baseline traffic latency
-            $eta = round(($distance * 2) + 3);
-
-            $hosp->distance_km = round($distance, 2);
-            $hosp->eta_minutes = $eta;
-
-            return $hosp;
-        })
-        ->filter(function ($hosp) {
-            // Filter by Open status and within 100km radius range
-            return strtolower($hosp->hospital_status) === 'open' && $hosp->distance_km <= 100;
-        });
-
-        // If no hospitals are within 100km, fall back to matching by state/city or loading all open hospitals
-        if ($processed->isEmpty()) {
-            $processed = $hospitals->filter(function ($hosp) {
-                return strtolower($hosp->hospital_status) === 'open';
-            })->map(function ($hosp) use ($lat, $lng) {
-                $distance = 6371 * acos(
+                min(1.0, // clamp to avoid NaN from floating point edge cases
                     cos(deg2rad($lat)) * cos(deg2rad($hosp->latitude)) *
                     cos(deg2rad($hosp->longitude) - deg2rad($lng)) +
                     sin(deg2rad($lat)) * sin(deg2rad($hosp->latitude))
-                );
-                $hosp->distance_km = round($distance, 2);
-                $hosp->eta_minutes = round(($distance * 2) + 3);
-                return $hosp;
-            });
+                )
+            );
+            $hosp->distance_km = round($distance, 2);
+            $hosp->eta_minutes = round(($distance * 2) + 3);
+            return $hosp;
+        });
+
+        // 2. Filter: open hospitals within 100km
+        $processed = $withDistances->filter(function ($hosp) {
+            return strtolower($hosp->hospital_status) === 'open' && $hosp->distance_km <= 100;
+        });
+
+        // 3. Fallback: if nothing within 100km, take the 10 CLOSEST open hospitals
+        //    (avoids returning 59 random hospitals ranked by wait time rather than distance)
+        if ($processed->isEmpty()) {
+            $processed = $withDistances
+                ->filter(fn($h) => strtolower($h->hospital_status) === 'open')
+                ->sortBy('distance_km')
+                ->take(10);
         }
 
-        // 2. Sort according to strict priority order:
-        //    1. Lowest Waiting Time
-        //    2. Shortest ETA
-        //    3. Required Doctor Available
-        //    4. Required Beds Available
-        //    5. Lowest Queue Count
-        $sorted = $processed->sort(function ($a, $b) {
-            // Priority 1: Lowest Waiting Time
-            if ($a->er_wait_minutes !== $b->er_wait_minutes) {
-                return $a->er_wait_minutes <=> $b->er_wait_minutes;
-            }
 
-            // Priority 2: Shortest Travel ETA
-            if ($a->eta_minutes !== $b->eta_minutes) {
-                return $a->eta_minutes <=> $b->eta_minutes;
-            }
+        // 2. Compute a weighted composite score for each hospital.
+        //    This ensures that changing the patient's GPS location meaningfully
+        //    changes the ranking, rather than always picking the same low-wait hospitals.
+        //
+        //    Score components (lower is better):
+        //      - Total treatment time  = ETA + ER wait           (weight: 40%)
+        //      - Distance              = distance_km             (weight: 20%)
+        //      - Queue pressure        = queue_count             (weight: 10%)
+        //      - Resource penalty      = lack of doctors/beds    (weight: 15%)
+        //      - Rating bonus          = inverse of rating       (weight: 15%)
 
-            // Priority 3: Distance
-            if ($a->distance_km !== $b->distance_km) {
-                return $a->distance_km <=> $b->distance_km;
-            }
+        // First, collect min/max values for normalization
+        $allDistances  = $processed->pluck('distance_km');
+        $allEtas       = $processed->pluck('eta_minutes');
+        $allWaits      = $processed->pluck('er_wait_minutes');
+        $allQueues     = $processed->pluck('queue_count');
+        $allRatings    = $processed->pluck('rating');
+        $allDoctors    = $processed->pluck('available_doctors');
+        $allIcu        = $processed->pluck('available_icu_beds');
+        $allEmergency  = $processed->pluck('emergency_beds');
 
-            // Priority 4: Doctor Availability
-            $aDoc = $a->available_doctors > 0 ? 1 : 0;
-            $bDoc = $b->available_doctors > 0 ? 1 : 0;
-            if ($aDoc !== $bDoc) {
-                return $bDoc <=> $aDoc;
-            }
+        $minDist = $allDistances->min() ?: 0;  $maxDist = $allDistances->max() ?: 1;
+        $minWait = $allWaits->min() ?: 0;       $maxWait = $allWaits->max() ?: 1;
+        $minEta  = $allEtas->min() ?: 0;        $maxEta  = $allEtas->max() ?: 1;
+        $minQueue = $allQueues->min() ?: 0;     $maxQueue = $allQueues->max() ?: 1;
+        $minRating = $allRatings->min() ?: 1;   $maxRating = $allRatings->max() ?: 5;
+        $maxDoctors = $allDoctors->max() ?: 1;
+        $maxIcu = $allIcu->max() ?: 1;
+        $maxEmBeds = $allEmergency->max() ?: 1;
 
-            // Priority 5: ICU Bed Availability
-            $aIcu = $a->available_icu_beds > 0 ? 1 : 0;
-            $bIcu = $b->available_icu_beds > 0 ? 1 : 0;
-            if ($aIcu !== $bIcu) {
-                return $bIcu <=> $aIcu;
-            }
+        // Normalize helper: returns value between 0 and 1
+        $normalize = function ($val, $min, $max) {
+            if ($max == $min) return 0;
+            return ($val - $min) / ($max - $min);
+        };
 
-            // Priority 6: Emergency Bed Availability
-            $aEr = $a->emergency_beds > 0 ? 1 : 0;
-            $bEr = $b->emergency_beds > 0 ? 1 : 0;
-            if ($aEr !== $bEr) {
-                return $bEr <=> $aEr;
-            }
+        $scored = $processed->map(function ($hosp) use ($normalize, $minDist, $maxDist, $minWait, $maxWait, $minEta, $maxEta, $minQueue, $maxQueue, $minRating, $maxRating, $maxDoctors, $maxIcu, $maxEmBeds) {
+            // Normalized values (0 = best, 1 = worst for cost factors)
+            $nTotalTime = $normalize($hosp->eta_minutes + $hosp->er_wait_minutes, $minEta + $minWait, $maxEta + $maxWait);
+            $nDist      = $normalize($hosp->distance_km, $minDist, $maxDist);
+            $nQueue     = $normalize($hosp->queue_count, $minQueue, $maxQueue);
 
-            // Priority 7: Lowest Queue Count
-            if ($a->queue_count !== $b->queue_count) {
-                return $a->queue_count <=> $b->queue_count;
-            }
+            // Resource score: higher is better, so invert (1 - normalized)
+            $doctorScore = $maxDoctors > 0 ? ($hosp->available_doctors / $maxDoctors) : 0;
+            $icuScore    = $maxIcu > 0 ? ($hosp->available_icu_beds / $maxIcu) : 0;
+            $emBedScore  = $maxEmBeds > 0 ? ($hosp->emergency_beds / $maxEmBeds) : 0;
+            $nResource   = 1 - (($doctorScore * 0.5) + ($icuScore * 0.25) + ($emBedScore * 0.25));
 
-            // Priority 8: Hospital Rating
-            return $b->rating <=> $a->rating;
-        })->values();
+            // Rating score: higher rating = lower cost
+            $nRating = 1 - $normalize($hosp->rating, $minRating, $maxRating);
+
+            // Weighted composite cost (lower = better hospital choice)
+            $cost = ($nTotalTime * 0.40) + ($nDist * 0.20) + ($nQueue * 0.10) + ($nResource * 0.15) + ($nRating * 0.15);
+
+            $hosp->_sort_cost = round($cost, 6);
+            return $hosp;
+        });
+
+        // Sort by composite cost (ascending = best first)
+        $sorted = $scored->sortBy('_sort_cost')->values();
 
         // 3. Assign recommendation scores based on relative sorted ranks
         $totalCount = $sorted->count();
-        $scored = $sorted->map(function ($hosp, $index) use ($totalCount) {
+        $sorted = $sorted->map(function ($hosp, $index) use ($totalCount) {
             if ($index === 0) {
                 $score = 99;
             } elseif ($index === 1) {
@@ -166,17 +168,24 @@ class HospitalController extends Controller
                 $score = max(30, round(65 - (($index - 4) * 2)));
             }
             $hosp->recommendation_score = $score;
+            unset($hosp->_sort_cost); // Clean up internal field
             return $hosp;
         });
 
-        $bestMatch = $scored->first();
-        // Return all matched nearby hospitals
-        $allMatches = $scored;
+        $bestMatch = $sorted->first();
+
+        // Deduplicate by hospital ID, then return top 10
+        $seenIds = [];
+        $allMatches = $sorted->filter(function ($h) use (&$seenIds) {
+            if (in_array($h->id, $seenIds)) return false;
+            $seenIds[] = $h->id;
+            return true;
+        })->take(10)->values();
 
         // Generate the dynamic explanation text for the top match
         $explanation = "";
         if ($bestMatch) {
-            $closest = $scored->sortBy('distance_km')->first();
+            $closest = $sorted->sortBy('distance_km')->first();
             
             $explanation = "{$bestMatch->name} is recommended as the fastest path to emergency treatment. ";
             $explanation .= "While it is {$bestMatch->distance_km} km away (ETA: {$bestMatch->eta_minutes} mins), its ER waiting time is only {$bestMatch->er_wait_minutes} mins, ";
@@ -197,7 +206,8 @@ class HospitalController extends Controller
                 'searched_coords' => [
                     'latitude' => $lat,
                     'longitude' => $lng
-                ]
+                ],
+                'geocoded_address' => $geocodedAddress
             ]
         ]);
     }

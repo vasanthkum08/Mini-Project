@@ -22,7 +22,7 @@ We have successfully resolved the issue where the Hospital Admin Dashboard alway
   - Velammal Hospital (`admin7@emergency.com`)
   - Meenakshi Mission Hospital (`admin8@emergency.com`)
   - Kauvery Hospital (`admin9@emergency.com`)
-  - Government Rajaji Hospital (`admin10@emergency.com`)
+  - Bowring Hospital (`admin10@emergency.com`)
 - Selecting any admin dynamically fills the input forms and automatically logs them into the corresponding hospital dashboard.
 
 ---

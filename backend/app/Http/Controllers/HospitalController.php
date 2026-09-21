@@ -22,15 +22,32 @@ class HospitalController extends Controller
 
         // Geocode manual details if coordinates are missing — always fresh, never cached
         if ($lat === null || $lng === null) {
+            $cityInput     = trim($request->input('city', ''));
+            $landmarkInput = trim($request->input('landmark', ''));
+
+            if (empty($cityInput) && empty($landmarkInput)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'City name is required for manual location search.'
+                ], 422);
+            }
+
             $addressDetails = [
-                'state' => $request->input('state'),
-                'city' => $request->input('city'),
-                'landmark' => $request->input('landmark'),
-                'pincode' => $request->input('pincode')
+                'state'    => $request->input('state'),
+                'city'     => $cityInput,
+                'landmark' => $landmarkInput,
+                'pincode'  => $request->input('pincode')
             ];
 
             $geoResult = GoogleMapsService::geocode($addressDetails);
             if ($geoResult) {
+                if (isset($geoResult['landmark_found']) && $geoResult['landmark_found'] === false) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Landmark not found. Please enter a valid landmark or locality.'
+                    ], 422);
+                }
+
                 if (!$geoResult['is_india']) {
                     return response()->json([
                         'success' => false,
@@ -61,19 +78,8 @@ class HospitalController extends Controller
 
         $hospitals = Hospital::all();
 
-        // 1. Calculate distances for ALL hospitals and attach ETA
-        $withDistances = $hospitals->map(function ($hosp) use ($lat, $lng) {
-            $distance = 6371 * acos(
-                min(1.0, // clamp to avoid NaN from floating point edge cases
-                    cos(deg2rad($lat)) * cos(deg2rad($hosp->latitude)) *
-                    cos(deg2rad($hosp->longitude) - deg2rad($lng)) +
-                    sin(deg2rad($lat)) * sin(deg2rad($hosp->latitude))
-                )
-            );
-            $hosp->distance_km = round($distance, 2);
-            $hosp->eta_minutes = round(($distance * 2) + 3);
-            return $hosp;
-        });
+        // 1. Calculate precise road distances for ALL hospitals and attach ETA
+        $withDistances = GoogleMapsService::calculateDistances(floatval($lat), floatval($lng), $hospitals);
 
         // 2. Filter: open hospitals within 100km
         $processed = $withDistances->filter(function ($hosp) {
@@ -136,7 +142,8 @@ class HospitalController extends Controller
             $doctorScore = $maxDoctors > 0 ? ($hosp->available_doctors / $maxDoctors) : 0;
             $icuScore    = $maxIcu > 0 ? ($hosp->available_icu_beds / $maxIcu) : 0;
             $emBedScore  = $maxEmBeds > 0 ? ($hosp->emergency_beds / $maxEmBeds) : 0;
-            $nResource   = 1 - (($doctorScore * 0.5) + ($icuScore * 0.25) + ($emBedScore * 0.25));
+            $ambScore    = ($hosp->ambulance_available !== false && (bool)$hosp->ambulance_available) ? 1.0 : 0.0;
+            $nResource   = 1 - (($doctorScore * 0.35) + ($icuScore * 0.25) + ($emBedScore * 0.25) + ($ambScore * 0.15));
 
             // Rating score: higher rating = lower cost
             $nRating = 1 - $normalize($hosp->rating, $minRating, $maxRating);

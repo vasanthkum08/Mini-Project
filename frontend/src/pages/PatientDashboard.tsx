@@ -180,6 +180,7 @@ const PatientDashboard: React.FC = () => {
   );
   const [recommendationReason, setRecommendationReason] = useState("");
   const [searchingHospitals, setSearchingHospitals] = useState(false);
+  const lastRequestParamsRef = React.useRef<string>("");
 
   // Error handling
   const [error, setError] = useState<string | null>(null);
@@ -197,7 +198,8 @@ const PatientDashboard: React.FC = () => {
     });
   };
 
-  const handleRunAIAnalysis = async () => {
+  const handleRunAIAnalysis = async (e?: React.SyntheticEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!symptoms.trim()) {
       setError("Please describe your symptoms first.");
       return;
@@ -237,8 +239,9 @@ const PatientDashboard: React.FC = () => {
     }
   };
 
-  // GPS Location Trigger with continuous watch tracking
-  const handleUseCurrentLocation = () => {
+  // GPS Location Trigger
+  const handleUseCurrentLocation = (e?: React.SyntheticEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
     if (!navigator.geolocation) {
       setError("GPS Geolocation is not supported by your browser.");
       return;
@@ -248,12 +251,7 @@ const PatientDashboard: React.FC = () => {
     setLocOption("gps");
     setFetchingGps(true);
 
-    if (gpsWatchId !== null) {
-      navigator.geolocation.clearWatch(gpsWatchId);
-      setGpsWatchId(null);
-    }
-
-    const watchId = navigator.geolocation.watchPosition(
+    navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
@@ -276,7 +274,6 @@ const PatientDashboard: React.FC = () => {
       },
       { enableHighAccuracy: true, timeout: 8000 },
     );
-    setGpsWatchId(watchId);
   };
 
   // Dynamic Request Type Detection (Emergency vs Normal Mode)
@@ -359,6 +356,13 @@ const PatientDashboard: React.FC = () => {
         pincode,
       };
 
+      const paramKey = JSON.stringify(params);
+      if (lastRequestParamsRef.current === paramKey && hospitals.length > 0) {
+        setGeocoding(false);
+        return;
+      }
+      lastRequestParamsRef.current = paramKey;
+
       const res = await api.get("/hospitals", { params });
       if (res.data.success) {
         const list = res.data.data.hospitals || [];
@@ -366,6 +370,16 @@ const PatientDashboard: React.FC = () => {
         setRecommendationReason(res.data.data.recommendation_reason);
         if (list.length > 0) {
           setSelectedHospital(list[0]);
+        }
+
+        if (res.data.data.searched_coords) {
+          const coords = res.data.data.searched_coords;
+          const addressLabel =
+            res.data.data.geocoded_address ||
+            `${landmark ? landmark + ", " : ""}${city}`;
+          setGpsText(
+            `${addressLabel} (Lat: ${Number(coords.latitude).toFixed(4)}, Lng: ${Number(coords.longitude).toFixed(4)})`,
+          );
         }
 
         // Dynamic navigation routing based on request type
@@ -388,12 +402,18 @@ const PatientDashboard: React.FC = () => {
             }
           }
         }, 150);
+      } else {
+        throw new Error(res.data.message || "Failed to search hospitals.");
       }
     } catch (err: any) {
       console.error(err);
+      setHospitals([]);
+      setSelectedHospital(null);
+      setRecommendationReason("");
       setError(
         err.response?.data?.message ||
-          "This application currently supports emergency services only within India.",
+          err.message ||
+          "Landmark not found. Please enter a valid landmark or locality.",
       );
     } finally {
       setGeocoding(false);
@@ -433,6 +453,13 @@ const PatientDashboard: React.FC = () => {
           : aiResult?.emergency_severity || "Medium",
         specialty: aiResult?.recommended_department || "",
       };
+
+      const paramKey = JSON.stringify(params);
+      if (lastRequestParamsRef.current === paramKey && hospitals.length > 0) {
+        setSearchingHospitals(false);
+        return;
+      }
+      lastRequestParamsRef.current = paramKey;
 
       const res = await api.get("/hospitals", { params });
       if (res.data.success) {
@@ -569,7 +596,11 @@ const PatientDashboard: React.FC = () => {
                     User Profile
                   </h4>
                   <button
-                    onClick={() => setProfileDropdownOpen(false)}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setProfileDropdownOpen(false);
+                    }}
                     className="text-[10px] font-bold text-slate-400 hover:text-slate-655 uppercase"
                   >
                     Close
@@ -718,13 +749,21 @@ const PatientDashboard: React.FC = () => {
 
                     <div className="flex flex-col gap-2 pt-2">
                       <button
-                        onClick={() => setIsEditingProfile(true)}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setIsEditingProfile(true);
+                        }}
                         className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider tracking-widest transition-all shadow-md shadow-blue-500/10"
                       >
                         Edit Profile
                       </button>
                       <button
-                        onClick={logout}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          logout();
+                        }}
                         className="w-full py-2 bg-slate-50 hover:bg-rose-50 text-slate-650 hover:text-rose-600 border border-slate-200/80 rounded-xl text-[10px] font-black uppercase transition-all"
                       >
                         Sign Out
@@ -1052,8 +1091,18 @@ const PatientDashboard: React.FC = () => {
                             {/* Ambulance & Dispatch Row */}
                             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-xs">
                               <div className="flex items-center gap-2">
-                                <span className="px-3 py-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5">
-                                  🚑 Ambulance Ready for Dispatch
+                                <span
+                                  className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5 ${
+                                    hosp.ambulance_available !== false &&
+                                    Boolean(hosp.ambulance_available)
+                                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                      : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                  }`}
+                                >
+                                  {hosp.ambulance_available !== false &&
+                                  Boolean(hosp.ambulance_available)
+                                    ? "🚑 Ambulance Available"
+                                    : "🚑 Ambulance Unavailable"}
                                 </span>
                                 <span className="px-3 py-1.5 bg-slate-700/80 text-slate-300 rounded-xl text-[10px] font-black uppercase">
                                   Queue: {hosp.queue_count} Patients Line
@@ -1358,7 +1407,10 @@ const PatientDashboard: React.FC = () => {
                   <button
                     key={sym}
                     type="button"
-                    onClick={() => handleChipClick(sym)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleChipClick(sym);
+                    }}
                     className="px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-150 border border-slate-200/60 rounded-xl text-xs font-bold text-slate-605 transition-all cursor-pointer shadow-sm hover:translate-y-[-1.5px] duration-200"
                   >
                     {sym}
@@ -1369,7 +1421,11 @@ const PatientDashboard: React.FC = () => {
 
             {/* AI Diagnostics run button */}
             <button
-              onClick={handleRunAIAnalysis}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                handleRunAIAnalysis(e);
+              }}
               disabled={analyzing}
               className="w-full py-4.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-black rounded-2xl shadow-lg shadow-blue-500/15 hover:shadow-xl hover:translate-y-[-1px] transition-all duration-250 flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
             >
@@ -1494,7 +1550,11 @@ const PatientDashboard: React.FC = () => {
 
                 <div className="grid grid-cols-2 gap-4 max-w-lg mx-auto">
                   <button
-                    onClick={handleUseCurrentLocation}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleUseCurrentLocation(e);
+                    }}
                     disabled={fetchingGps || searchingHospitals}
                     className="py-3 bg-blue-50 hover:bg-blue-100/80 border border-blue-200/50 rounded-xl text-xs font-black text-blue-700 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all duration-300 shadow-sm"
                   >
@@ -1507,11 +1567,13 @@ const PatientDashboard: React.FC = () => {
                   </button>
 
                   <button
-                    onClick={() =>
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
                       setLocOption((prev) =>
                         prev === "manual" ? null : "manual",
-                      )
-                    }
+                      );
+                    }}
                     className="py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-black text-slate-700 flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-300 shadow-sm"
                   >
                     <MapPin className="h-4 w-4" />
@@ -1523,7 +1585,10 @@ const PatientDashboard: React.FC = () => {
               {/* manual form address */}
               {locOption === "manual" && (
                 <form
-                  onSubmit={handleManualLocationSubmit}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleManualLocationSubmit(e);
+                  }}
                   className="bg-slate-50/50 rounded-2xl p-5 border border-slate-150 space-y-4 animate-slide-in"
                 >
                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
@@ -1584,6 +1649,10 @@ const PatientDashboard: React.FC = () => {
                   <button
                     type="submit"
                     disabled={geocoding}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleManualLocationSubmit(e);
+                    }}
                     className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow-md shadow-blue-100 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     {geocoding ? (

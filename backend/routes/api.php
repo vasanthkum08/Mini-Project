@@ -51,4 +51,5 @@ Route::middleware('auth:api')->group(function () {
     Route::put('admin/hospital', [\App\Http\Controllers\HospitalAdminController::class, 'updateHospital']);
     Route::get('responder/profile', [\App\Http\Controllers\ResponderController::class, 'getProfile']);
     Route::put('responder/profile', [\App\Http\Controllers\ResponderController::class, 'updateProfile']);
+    Route::put('responder/status', [\App\Http\Controllers\ResponderController::class, 'updateCaseStatus']);
 });

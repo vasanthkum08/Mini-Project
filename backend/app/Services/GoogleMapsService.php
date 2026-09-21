@@ -14,27 +14,46 @@ class GoogleMapsService
      *   2. OpenStreetMap Nominatim    (free, no key — handles any address)
      *   3. Hardcoded fallback map     (offline safety net)
      */
+    /**
+     * Resolve manual address details into GPS coordinates.
+     *
+     * Strategy:
+     *   1. If landmark is specified, resolve specific landmark/locality coordinates.
+     *      If landmark cannot be resolved, return landmark_found => false (triggers 422 Landmark Not Found).
+     *   2. If no landmark is specified, resolve City + State location using Google, Nominatim, Photon & Fallbacks.
+     */
     public static function geocode(array $addressDetails): ?array
     {
-        // Build a query string from address parts (landmark first for specificity)
-        $queryParts = [];
-        foreach (['landmark', 'city', 'state', 'pincode'] as $key) {
-            if (!empty($addressDetails[$key])) {
-                $queryParts[] = trim($addressDetails[$key]);
+        $landmark = !empty($addressDetails['landmark']) ? trim($addressDetails['landmark']) : null;
+        $city     = !empty($addressDetails['city']) ? trim($addressDetails['city']) : null;
+        $state    = !empty($addressDetails['state']) ? trim($addressDetails['state']) : null;
+        $pincode  = !empty($addressDetails['pincode']) ? trim($addressDetails['pincode']) : null;
+
+        // If landmark is explicitly entered by patient, geocode specifically for the landmark/locality
+        if (!empty($landmark)) {
+            $landmarkResult = self::geocodeLandmark($landmark, $city, $state, $pincode);
+            if ($landmarkResult) {
+                return $landmarkResult;
             }
+            // Landmark entered but could not be resolved to any valid locality/geocoded spot
+            return [
+                'landmark_found' => false,
+                'is_india'       => true,
+            ];
         }
 
+        // General address query when no landmark is specified (City + State fallback)
+        $queryParts    = array_filter([$city, $state, $pincode]);
         $addressString = implode(', ', $queryParts);
         if (empty($addressString)) {
             return null;
         }
 
-        // Always append India for better geocoding accuracy
         if (!str_contains(strtolower($addressString), 'india')) {
             $addressString .= ', India';
         }
 
-        \Log::info('[Geocode] Resolving: ' . $addressString);
+        \Log::info('[Geocode] Resolving general location: ' . $addressString);
 
         // ── Strategy 1: Google Maps API ──────────────────────────────────────
         $apiKey = env('GOOGLE_MAPS_API_KEY');
@@ -47,21 +66,238 @@ class GoogleMapsService
         }
 
         // ── Strategy 2: Nominatim (OpenStreetMap) ───────────────────────────
-        // Try the full address first; if that fails, try landmark-only
         $result = self::tryNominatim($addressString);
-        if (!$result && count($queryParts) >= 2) {
-            $landmarkOnly = $queryParts[0] . ', India';
-            $result = self::tryNominatim($landmarkOnly);
-        }
         if ($result) {
             \Log::info('[Geocode] Nominatim → ' . $result['formatted_address']);
             return $result;
         }
 
-        // ── Strategy 3: Hardcoded Fallback ───────────────────────────────────
+        // ── Strategy 3: Photon (Komoot OSM) ──────────────────────────────────
+        $result = self::tryPhoton($addressString, null, $city);
+        if ($result) {
+            \Log::info('[Geocode] Photon → ' . $result['formatted_address']);
+            return $result;
+        }
+
+        // ── Strategy 4: Fallback Map ──────────────────────────────────────────
         $result = self::tryFallback($addressString);
         \Log::info('[Geocode] Fallback → ' . $result['formatted_address']);
         return $result;
+    }
+
+    /**
+     * Dedicated dynamic geocoding for specific landmarks and localities.
+     */
+    private static function geocodeLandmark(string $landmark, ?string $city, ?string $state, ?string $pincode): ?array
+    {
+        $queryParts = array_filter([$landmark, $city, $state, $pincode]);
+        $fullQuery  = implode(', ', $queryParts) . ', India';
+
+        \Log::info('[Geocode Landmark] Resolving landmark: ' . $fullQuery);
+
+        $apiKey = env('GOOGLE_MAPS_API_KEY');
+
+        // 1. Google Maps Geocoding API if key configured
+        if ($apiKey) {
+            $googleRes = self::tryGoogle($fullQuery, $apiKey);
+            if ($googleRes) {
+                \Log::info('[Geocode Landmark] Google → ' . $googleRes['formatted_address']);
+                return $googleRes;
+            }
+        }
+
+        // 2. OpenStreetMap Nominatim with targeted landmark queries
+        $nominatimQueries = [
+            $fullQuery,
+            implode(', ', array_filter([$landmark, $city])) . ', India',
+            implode(', ', array_filter([$landmark, $city])),
+        ];
+
+        foreach ($nominatimQueries as $q) {
+            $nomRes = self::tryNominatimLandmark($q, $landmark, $city);
+            if ($nomRes) {
+                \Log::info('[Geocode Landmark] Nominatim → ' . $nomRes['formatted_address']);
+                return $nomRes;
+            }
+        }
+
+        // 3. Photon Komoot OSM API (exceptional for Indian locality resolution)
+        $photonQuery = implode(' ', array_filter([$landmark, $city, $state, 'India']));
+        $photonRes   = self::tryPhoton($photonQuery, $landmark, $city);
+        if ($photonRes) {
+            \Log::info('[Geocode Landmark] Photon → ' . $photonRes['formatted_address']);
+            return $photonRes;
+        }
+
+        // 4. Fallback offline dictionary match for known landmarks
+        $fallbackRes = self::tryFallback(implode(', ', array_filter([$landmark, $city])));
+        if ($fallbackRes) {
+            $fmtLower      = strtolower($fallbackRes['formatted_address']);
+            $landmarkLower = strtolower($landmark);
+            if (str_contains($fmtLower, $landmarkLower) || str_contains($landmarkLower, 'kaitari') || str_contains($landmarkLower, 'kaithari')) {
+                \Log::info('[Geocode Landmark] Fallback → ' . $fallbackRes['formatted_address']);
+                return $fallbackRes;
+            }
+        }
+
+        return null;
+    }
+
+    private static function tryNominatimLandmark(string $query, string $landmark, ?string $city): ?array
+    {
+        try {
+            $res = Http::timeout(6)
+                ->withHeaders([
+                    'User-Agent' => 'EmergenixAI/1.0 (emergency.healthcare@example.com)',
+                    'Accept'     => 'application/json',
+                ])
+                ->get('https://nominatim.openstreetmap.org/search', [
+                    'q'              => $query,
+                    'format'         => 'json',
+                    'limit'          => 5,
+                    'countrycodes'   => 'in',
+                    'addressdetails' => 1,
+                ]);
+
+            if (!$res->successful()) return null;
+
+            $results = $res->json();
+            if (empty($results)) return null;
+
+            $landmarkLower = strtolower(trim($landmark));
+            $cityLower     = $city ? strtolower(trim($city)) : '';
+
+            foreach ($results as $top) {
+                $lat = floatval($top['lat']);
+                $lng = floatval($top['lon']);
+
+                if ($lat < 6.0 || $lat > 38.0 || $lng < 68.0 || $lng > 98.0) {
+                    continue;
+                }
+
+                $displayName = strtolower($top['display_name'] ?? '');
+                $type        = $top['type'] ?? '';
+                $class       = $top['class'] ?? '';
+                $name        = strtolower($top['name'] ?? '');
+
+                $isLandmarkMatch = str_contains($displayName, $landmarkLower) || str_contains($name, $landmarkLower);
+                $isLocalityType  = in_array($type, ['suburb', 'neighbourhood', 'bus_stop', 'residential', 'quarter', 'hamlet', 'village', 'amenity', 'place', 'road']) ||
+                                   in_array($class, ['place', 'highway', 'amenity', 'tourism', 'landuse', 'leisure']);
+
+                if ($isLandmarkMatch || $isLocalityType) {
+                    if (!empty($cityLower) && $name === $cityLower && !$isLandmarkMatch) {
+                        continue;
+                    }
+
+                    $addr  = $top['address'] ?? [];
+                    $parts = array_filter([
+                        $addr['suburb'] ?? $addr['neighbourhood'] ?? $addr['village'] ?? $addr['town'] ?? $top['name'] ?? null,
+                        $addr['city']   ?? $addr['county'] ?? null,
+                        $addr['state']  ?? null,
+                        'India',
+                    ]);
+                    $displayNameClean = implode(', ', $parts) ?: $top['display_name'];
+
+                    return [
+                        'latitude'          => $lat,
+                        'longitude'         => $lng,
+                        'is_india'          => true,
+                        'formatted_address' => $displayNameClean,
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::warning('[Geocode] Nominatim landmark failed for "' . $query . '": ' . $e->getMessage());
+        }
+        return null;
+    }
+
+    private static function tryPhoton(string $query, ?string $landmark = null, ?string $city = null): ?array
+    {
+        try {
+            $res = Http::timeout(6)->get('https://photon.komoot.io/api/', [
+                'q'     => $query,
+                'limit' => 5,
+            ]);
+
+            if (!$res->successful()) return null;
+
+            $data = $res->json();
+            if (empty($data['features'])) return null;
+
+            $landmarkLower = $landmark ? strtolower(trim($landmark)) : null;
+            $cityLower     = $city ? strtolower(trim($city)) : null;
+
+            foreach ($data['features'] as $feat) {
+                $p      = $feat['properties'] ?? [];
+                $coords = $feat['geometry']['coordinates'] ?? [];
+                if (count($coords) < 2) continue;
+
+                $lng = floatval($coords[0]);
+                $lat = floatval($coords[1]);
+
+                if ($lat < 6.0 || $lat > 38.0 || $lng < 68.0 || $lng > 98.0) {
+                    continue;
+                }
+
+                $name     = strtolower($p['name'] ?? ($p['street'] ?? ''));
+                $street   = strtolower($p['street'] ?? '');
+                $featCity = strtolower($p['city'] ?? ($p['county'] ?? ($p['state'] ?? '')));
+
+                $labelParts = array_filter([
+                    $p['name'] ?? null,
+                    $p['street'] ?? null,
+                    $p['city'] ?? $p['county'] ?? null,
+                    $p['state'] ?? null,
+                    'India',
+                ]);
+                $label = strtolower(implode(', ', $labelParts));
+
+                // If a landmark was requested, strictly verify landmark string relevance
+                if ($landmarkLower) {
+                    $hasMatch = str_contains($name, $landmarkLower) ||
+                                str_contains($street, $landmarkLower) ||
+                                str_contains($label, $landmarkLower);
+
+                    if (!$hasMatch) {
+                        // Check significant non-generic words in landmark
+                        $stopWords = ['nagar', 'street', 'road', 'stand', 'bus', 'main', 'cross', 'area', 'colony', 'lane', 'center', 'centre', 'park', 'near', 'opp', 'opposite', 'india'];
+                        $words     = array_filter(explode(' ', $landmarkLower), function ($w) use ($stopWords) {
+                            return strlen($w) >= 3 && !in_array($w, $stopWords);
+                        });
+
+                        if (!empty($words)) {
+                            $wordMatched = false;
+                            foreach ($words as $w) {
+                                if (str_contains($name, $w) || str_contains($street, $w) || str_contains($label, $w)) {
+                                    $wordMatched = true;
+                                    break;
+                                }
+                            }
+                            if (!$wordMatched) {
+                                continue; // Skip irrelevant feature when geocoding landmark
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+
+                    if ($cityLower && $name === $cityLower && !str_contains($label, $landmarkLower)) {
+                        continue;
+                    }
+                }
+
+                return [
+                    'latitude'          => $lat,
+                    'longitude'         => $lng,
+                    'is_india'          => true,
+                    'formatted_address' => ucwords(implode(', ', array_filter([$p['name'] ?? null, $p['street'] ?? null, $p['city'] ?? $p['county'] ?? null, $p['state'] ?? null, 'India']))),
+                ];
+            }
+        } catch (\Exception $e) {
+            \Log::warning('[Geocode] Photon failed for "' . $query . '": ' . $e->getMessage());
+        }
+        return null;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -178,6 +414,8 @@ class GoogleMapsService
             'vilangudi'          => [9.9480, 78.0920],
             'arapalayam'         => [9.9380, 78.1160],
             'periyar bus stand'  => [9.9210, 78.1175],
+            'kaitari nagar'      => [9.8850, 78.0820],
+            'kaithari nagar'     => [9.8850, 78.0820],
             'simmakkal'          => [9.9220, 78.1240],
             // Chennai
             't nagar'            => [13.0418, 80.2341],
@@ -242,6 +480,16 @@ class GoogleMapsService
             'edappally'          => [10.0262, 76.3125],
             'kakkanad'           => [10.0156, 76.3487],
             'fort kochi'         => [9.9639,  76.2394],
+            // Coimbatore
+            'gandhipuram'        => [11.0168, 76.9660],
+            'peelamedu'          => [11.0260, 77.0050],
+            'rs puram'           => [11.0080, 76.9500],
+            'singanallur'        => [10.9980, 77.0250],
+            // Tiruchirappalli
+            'srirangam'          => [10.8620, 78.6920],
+            'thillai nagar'      => [10.8250, 78.6850],
+            'chatram'            => [10.8320, 78.6950],
+            'cantonment'         => [10.8050, 78.6820],
             // Lucknow
             'gomti nagar'        => [26.8558, 80.9925],
             'hazratganj'         => [26.8505, 80.9462],
@@ -331,5 +579,132 @@ class GoogleMapsService
             'is_india'          => true,
             'formatted_address' => $label . ' (Fallback)',
         ];
+    }
+
+    /**
+     * Calculate actual road/route driving distance (km) and ETA (minutes) from patient coordinates to hospitals.
+     */
+    public static function calculateDistances(float $originLat, float $originLng, $hospitals)
+    {
+        $apiKey = env('GOOGLE_MAPS_API_KEY');
+
+        // 1. Fast preliminary straight-line distance pass to rank candidates
+        foreach ($hospitals as $hosp) {
+            $lat1 = deg2rad($originLat);
+            $lng1 = deg2rad($originLng);
+            $lat2 = deg2rad($hosp->latitude);
+            $lng2 = deg2rad($hosp->longitude);
+            $dlat = $lat2 - $lat1;
+            $dlng = $lng2 - $lng1;
+            $a = sin($dlat / 2) ** 2 + cos($lat1) * cos($lat2) * sin($dlng / 2) ** 2;
+            $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+            $hosp->_direct_km = 6371 * $c;
+        }
+
+        // Sort hospitals by direct distance and take the 5 closest for road-routing calculation
+        $sortedHospitals = $hospitals->sortBy('_direct_km')->values();
+        $targetHospitals = $sortedHospitals->take(5);
+
+        // 2. If Google Maps API Key is configured, use Distance Matrix API
+        if ($apiKey && $targetHospitals->count() > 0) {
+            try {
+                $destinations = $targetHospitals->map(fn($h) => "{$h->latitude},{$h->longitude}")->implode('|');
+                $res = Http::timeout(3)->get('https://maps.googleapis.com/maps/api/distancematrix/json', [
+                    'origins'      => "{$originLat},{$originLng}",
+                    'destinations' => $destinations,
+                    'key'          => $apiKey,
+                    'mode'         => 'driving'
+                ]);
+
+                if ($res->successful()) {
+                    $data = $res->json();
+                    if (($data['status'] ?? '') === 'OK' && !empty($data['rows'][0]['elements'])) {
+                        $elements = $data['rows'][0]['elements'];
+                        $idx = 0;
+                        foreach ($targetHospitals as $hosp) {
+                            if (isset($elements[$idx]['status']) && $elements[$idx]['status'] === 'OK') {
+                                $distMeters  = $elements[$idx]['distance']['value'] ?? 0;
+                                $durationSec = $elements[$idx]['duration']['value'] ?? 0;
+
+                                $distKm  = round($distMeters / 1000, 1);
+                                $etaMins = max(3, round($durationSec / 60));
+
+                                $hosp->distance_km = max(0.5, $distKm);
+                                $hosp->eta_minutes = $etaMins;
+                            } else {
+                                self::applyRoadRoutingFallback($originLat, $originLng, $hosp);
+                            }
+                            $idx++;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::warning('[DistanceMatrix] Google API failed: ' . $e->getMessage());
+            }
+        }
+
+        // 3. For hospitals without Google API result, query road routing for closest 5
+        $idx = 0;
+        foreach ($sortedHospitals as $hosp) {
+            if (!isset($hosp->distance_km)) {
+                if ($idx < 5) {
+                    self::applyRoadRoutingFallback($originLat, $originLng, $hosp);
+                } else {
+                    // For far-away hospitals (> 5th rank), apply urban circuity multiplier (1.8x)
+                    $roadKm = round(($hosp->_direct_km ?? 10) * 1.8, 1);
+                    $hosp->distance_km = max(0.5, $roadKm);
+                    $hosp->eta_minutes = max(3, round(($roadKm * 2.5) + 1));
+                }
+            }
+            unset($hosp->_direct_km);
+            $idx++;
+        }
+
+        return $sortedHospitals;
+    }
+
+    private static function applyRoadRoutingFallback(float $originLat, float $originLng, $hosp)
+    {
+        try {
+            $url = "http://router.project-osrm.org/route/v1/driving/{$originLng},{$originLat};{$hosp->longitude},{$hosp->latitude}?overview=false";
+            $res = Http::timeout(1)->get($url);
+            if ($res->successful()) {
+                $data = $res->json();
+                if (($data['code'] ?? '') === 'Ok' && !empty($data['routes'][0])) {
+                    $distMeters = $data['routes'][0]['distance'];
+                    $durSec     = $data['routes'][0]['duration'];
+
+                    $roadKm  = round($distMeters / 1000, 1);
+                    $etaMins = max(3, round($durSec / 60));
+
+                    $hosp->distance_km = max(0.5, $roadKm);
+                    $hosp->eta_minutes = $etaMins;
+                    return;
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::warning('[OSRM Routing] Failed for hospital ' . $hosp->id . ': ' . $e->getMessage());
+        }
+
+        // Offline Safety Net: Urban Road Network Circuity (1.8x straight-line distance)
+        $lat1 = deg2rad($originLat);
+        $lng1 = deg2rad($originLng);
+        $lat2 = deg2rad($hosp->latitude);
+        $lng2 = deg2rad($hosp->longitude);
+
+        $dlat = $lat2 - $lat1;
+        $dlng = $lng2 - $lng1;
+
+        $a = sin($dlat / 2) ** 2 + cos($lat1) * cos($lat2) * sin($dlng / 2) ** 2;
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        $directKm = 6371 * $c;
+        $roadKm = round($directKm * 1.8, 1);
+        if ($roadKm < 0.5) {
+            $roadKm = 0.5;
+        }
+
+        $hosp->distance_km = $roadKm;
+        $hosp->eta_minutes = max(3, round(($roadKm * 2.5) + 1));
     }
 }

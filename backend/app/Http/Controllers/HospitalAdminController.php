@@ -12,29 +12,31 @@ class HospitalAdminController extends Controller
     /**
      * Get the hospital assigned to the logged-in admin.
      */
-    public function getHospital()
+    public function getHospital(Request $request)
     {
         $user = Auth::guard('api')->user();
+        $requestedId = $request->query('hospital_id');
+        $hospitalId = $requestedId ?: $user->hospital_id;
 
-        if (!$user->hospital_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No hospital is currently assigned to this administrator account.'
-            ], 404);
+        if (!$hospitalId) {
+            $hospital = Hospital::first();
+        } else {
+            $hospital = Hospital::find($hospitalId);
         }
-
-        $hospital = Hospital::find($user->hospital_id);
 
         if (!$hospital) {
             return response()->json([
                 'success' => false,
-                'message' => 'The assigned hospital record could not be found in the database.'
+                'message' => 'The requested hospital record could not be found in the database.'
             ], 404);
         }
 
+        $allHospitals = Hospital::select('id', 'name', 'city', 'state')->get();
+
         return response()->json([
             'success' => true,
-            'data' => $hospital
+            'data' => $hospital,
+            'all_hospitals' => $allHospitals
         ]);
     }
 
@@ -44,20 +46,22 @@ class HospitalAdminController extends Controller
     public function updateHospital(Request $request)
     {
         $user = Auth::guard('api')->user();
+        $requestedId = $request->input('hospital_id');
+        $hospitalId = $requestedId ?: $user->hospital_id;
 
-        if (!$user->hospital_id) {
+        if (!$hospitalId) {
             return response()->json([
                 'success' => false,
-                'message' => 'No hospital is currently assigned to this administrator account.'
+                'message' => 'No hospital specified or assigned.'
             ], 404);
         }
 
-        $hospital = Hospital::find($user->hospital_id);
+        $hospital = Hospital::find($hospitalId);
 
         if (!$hospital) {
             return response()->json([
                 'success' => false,
-                'message' => 'The assigned hospital record could not be found.'
+                'message' => 'The specified hospital record could not be found.'
             ], 404);
         }
 

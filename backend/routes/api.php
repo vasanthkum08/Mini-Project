@@ -46,9 +46,10 @@ Route::middleware('auth:api')->group(function () {
     // Phase 2 Emergency Appointment requests
     Route::post('appointments', [AppointmentController::class, 'store']);
 
-    // Phase 2 Hospital Admin & Responder dashboards
+    // Phase 4 Analytics & Hospital Admin endpoints
     Route::get('admin/hospital', [\App\Http\Controllers\HospitalAdminController::class, 'getHospital']);
     Route::put('admin/hospital', [\App\Http\Controllers\HospitalAdminController::class, 'updateHospital']);
+    Route::get('admin/analytics', [\App\Http\Controllers\HospitalAdminController::class, 'getAnalytics']);
     Route::get('responder/profile', [\App\Http\Controllers\ResponderController::class, 'getProfile']);
     Route::put('responder/profile', [\App\Http\Controllers\ResponderController::class, 'updateProfile']);
     Route::put('responder/status', [\App\Http\Controllers\ResponderController::class, 'updateCaseStatus']);

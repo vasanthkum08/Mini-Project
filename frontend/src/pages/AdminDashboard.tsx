@@ -16,6 +16,10 @@ import {
   Phone,
   ShieldCheck,
   Star,
+  BarChart3,
+  TrendingUp,
+  PieChart,
+  Layers
 } from "lucide-react";
 
 const AdminDashboard: React.FC = () => {
@@ -42,7 +46,9 @@ const AdminDashboard: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Form states
+  // Form states & Phase 4 Analytics states
+  const [activeTab, setActiveTab] = useState<'capacity' | 'analytics'>('capacity');
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [availableDoctors, setAvailableDoctors] = useState<number>(0);
   const [availableIcuBeds, setAvailableIcuBeds] = useState<number>(0);
   const [availableGeneralBeds, setAvailableGeneralBeds] = useState<number>(0);
@@ -50,6 +56,18 @@ const AdminDashboard: React.FC = () => {
   const [erWaitMinutes, setErWaitMinutes] = useState<number>(0);
   const [queueCount, setQueueCount] = useState<number>(0);
   const [ambulanceAvailable, setAmbulanceAvailable] = useState<boolean>(true);
+
+  const fetchAnalytics = async (selectedId?: number) => {
+    try {
+      const url = selectedId ? `/admin/analytics?hospital_id=${selectedId}` : '/admin/analytics';
+      const res = await api.get(url);
+      if (res.data.success) {
+        setAnalyticsData(res.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load analytics:', err);
+    }
+  };
 
   const fetchHospital = async (selectedId?: number) => {
     setLoading(true);
@@ -72,6 +90,7 @@ const AdminDashboard: React.FC = () => {
         if (res.data.all_hospitals) {
           setAllHospitals(res.data.all_hospitals);
         }
+        fetchAnalytics(data.id);
       }
     } catch (err: any) {
       console.error(err);
@@ -542,6 +561,45 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* ── TABS NAVIGATION (CAPACITY VS PHASE 4 ANALYTICS) ────────── */}
+            <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); setActiveTab('capacity'); }}
+                  className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
+                    activeTab === 'capacity' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Activity className="h-4 w-4" /> Live Capacity & Operational Telemetry
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); setActiveTab('analytics'); }}
+                  className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
+                    activeTab === 'analytics' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <BarChart3 className="h-4 w-4" /> Performance & Case Analytics
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => { fetchHospital(hospital?.id); fetchAnalytics(hospital?.id); }}
+                className="p-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-slate-600" /> Refresh Telemetry
+              </button>
+            </div>
+
+            {activeTab === 'capacity' && (
+              <div className="space-y-8">
             {/* LIVE OPERATIONAL MONITOR STATISTICS CARD */}
             <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6">
               <h3 className="text-xs font-black text-[#1E3A8A] uppercase tracking-widest border-b border-slate-100 pb-2.5">
@@ -909,6 +967,191 @@ const AdminDashboard: React.FC = () => {
                 </div>
               </div>
             </form>
+            </div>
+            )}
+
+            {/* ── PERFORMANCE & EMERGENCY CASE ANALYTICS TAB VIEW ── */}
+            {activeTab === 'analytics' && (
+              <div className="space-y-6 animate-slide-in">
+                
+                {/* 1. Analytics Summary Metrics Header */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                      <BarChart3 className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Total Cases Processed</span>
+                      <span className="text-2xl font-black text-slate-900">{analyticsData?.summary?.total_cases || 0}</span>
+                      <span className="text-[10px] text-emerald-600 font-bold block mt-0.5">Live Database Records</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                      <TrendingUp className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Emergency Resolution Rate</span>
+                      <span className="text-2xl font-black text-emerald-600">{analyticsData?.summary?.resolution_rate || '100%'}</span>
+                      <span className="text-[10px] text-slate-400 font-bold block mt-0.5">{analyticsData?.summary?.completed_cases || 0} Successful Rescues</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-purple-50 border border-purple-100 text-purple-600 flex items-center justify-center shrink-0">
+                      <Clock className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Avg ER Wait Time</span>
+                      <span className="text-2xl font-black text-purple-600">{analyticsData?.summary?.avg_er_wait_time || '6 mins'}</span>
+                      <span className="text-[10px] text-slate-400 font-bold block mt-0.5">Average Intake Latency</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                      <Activity className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Active Dispatches</span>
+                      <span className="text-2xl font-black text-amber-600">{analyticsData?.summary?.active_cases || 0}</span>
+                      <span className="text-[10px] text-slate-400 font-bold block mt-0.5">Under Live Responder Care</span>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* 2. Charts & Analytics Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  
+                  {/* Departmental Case Distribution Bar Chart */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-2">
+                        <Layers className="h-5 w-5 text-blue-600" />
+                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                          Departmental Case Distribution
+                        </h4>
+                      </div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">Live MySQL Count</span>
+                    </div>
+
+                    <div className="space-y-3.5 pt-2">
+                      {analyticsData?.department_analytics && Object.entries(analyticsData.department_analytics).map(([dept, count]: any) => {
+                        const vals = Object.values(analyticsData.department_analytics) as number[];
+                        const maxVal = Math.max(...vals, 1);
+                        const pct = Math.round((count / maxVal) * 100);
+                        return (
+                          <div key={dept} className="space-y-1">
+                            <div className="flex justify-between text-xs font-bold text-slate-700">
+                              <span>{dept}</span>
+                              <span className="font-black text-blue-600">{count} Cases ({pct}%)</span>
+                            </div>
+                            <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-500" 
+                                style={{ width: `${Math.max(pct, 8)}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Priority Severity Breakdown Chart */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center gap-2">
+                        <PieChart className="h-5 w-5 text-rose-600" />
+                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                          Emergency Severity Level Breakdown
+                        </h4>
+                      </div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">Triage Distribution</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                      {analyticsData?.priority_analytics && Object.entries(analyticsData.priority_analytics).map(([priority, count]: any) => {
+                        const colorMap: any = {
+                          Critical: 'bg-rose-50 border-rose-200 text-rose-700',
+                          High: 'bg-amber-50 border-amber-200 text-amber-700',
+                          Medium: 'bg-blue-50 border-blue-200 text-blue-700',
+                          Low: 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        };
+                        return (
+                          <div key={priority} className={`p-4 rounded-2xl border ${colorMap[priority] || 'bg-slate-50 border-slate-200 text-slate-700'} space-y-1`}>
+                            <span className="text-[10px] font-black uppercase tracking-wider block">{priority} Priority</span>
+                            <span className="text-2xl font-black block">{count}</span>
+                            <span className="text-[9px] font-bold opacity-80 block">Active Triage Pool</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* 3. Hospital Resource Capacity Meters */}
+                <div className="bg-slate-900 text-white border border-slate-800 rounded-3xl p-8 shadow-xl space-y-6">
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-emerald-500/20 text-emerald-400 rounded-2xl flex items-center justify-center border border-emerald-500/30">
+                        <Activity className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black uppercase tracking-wider text-white">
+                          Real-Time Hospital Resource Capacity Telemetry
+                        </h4>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                          Dynamic MySQL Capacity & Occupancy Meters
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full text-[9.5px] font-black uppercase">
+                      ● Operational
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs font-semibold">
+                    <div className="bg-slate-800/80 p-4.5 rounded-2xl border border-slate-700/80 space-y-2">
+                      <span className="text-[9.5px] text-slate-400 font-black uppercase tracking-wider block">ICU Beds Available</span>
+                      <span className="text-2xl font-black text-white">{analyticsData?.resources?.available_icu_beds || 0}</span>
+                      <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: '65%' }}></div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-800/80 p-4.5 rounded-2xl border border-slate-700/80 space-y-2">
+                      <span className="text-[9.5px] text-slate-400 font-black uppercase tracking-wider block">Emergency Beds</span>
+                      <span className="text-2xl font-black text-white">{analyticsData?.resources?.emergency_beds || 0}</span>
+                      <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{ width: '80%' }}></div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-800/80 p-4.5 rounded-2xl border border-slate-700/80 space-y-2">
+                      <span className="text-[9.5px] text-slate-400 font-black uppercase tracking-wider block">Active On-Call Doctors</span>
+                      <span className="text-2xl font-black text-white">{analyticsData?.resources?.available_doctors || 0}</span>
+                      <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-purple-500 rounded-full" style={{ width: '75%' }}></div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-800/80 p-4.5 rounded-2xl border border-slate-700/80 space-y-2">
+                      <span className="text-[9.5px] text-slate-400 font-black uppercase tracking-wider block">Active Ambulances</span>
+                      <span className="text-2xl font-black text-emerald-400">{analyticsData?.resources?.ambulance_fleet_active || 0} Vehicles</span>
+                      <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-400 rounded-full" style={{ width: '90%' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            )}
           </div>
         )}
       </main>

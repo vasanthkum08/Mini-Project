@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Hospital;
+use App\Models\EmergencyAppointment;
 use App\Services\GoogleMapsService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 
 class HospitalController extends Controller
@@ -117,6 +119,17 @@ class HospitalController extends Controller
         $allIcu        = $processed->pluck('available_icu_beds');
         $allEmergency  = $processed->pluck('emergency_beds');
 
+        // Fetch logged-in patient's previous completed emergency visits for History Affinity Scoring
+        $user = Auth::guard('api')->user();
+        $userHistoryHospitals = [];
+        if ($user) {
+            $userHistoryHospitals = EmergencyAppointment::where('user_id', $user->id)
+                ->where('status', 'Completed')
+                ->pluck('hospital_name')
+                ->filter()
+                ->toArray();
+        }
+
         $minDist = $allDistances->min() ?: 0;  $maxDist = $allDistances->max() ?: 1;
         $minWait = $allWaits->min() ?: 0;       $maxWait = $allWaits->max() ?: 1;
         $minEta  = $allEtas->min() ?: 0;        $maxEta  = $allEtas->max() ?: 1;
@@ -132,7 +145,7 @@ class HospitalController extends Controller
             return ($val - $min) / ($max - $min);
         };
 
-        $scored = $processed->map(function ($hosp) use ($normalize, $minDist, $maxDist, $minWait, $maxWait, $minEta, $maxEta, $minQueue, $maxQueue, $minRating, $maxRating, $maxDoctors, $maxIcu, $maxEmBeds) {
+        $scored = $processed->map(function ($hosp) use ($normalize, $minDist, $maxDist, $minWait, $maxWait, $minEta, $maxEta, $minQueue, $maxQueue, $minRating, $maxRating, $maxDoctors, $maxIcu, $maxEmBeds, $userHistoryHospitals) {
             // Normalized values (0 = best, 1 = worst for cost factors)
             $nTotalTime = $normalize($hosp->eta_minutes + $hosp->er_wait_minutes, $minEta + $minWait, $maxEta + $maxWait);
             $nDist      = $normalize($hosp->distance_km, $minDist, $maxDist);
@@ -148,8 +161,21 @@ class HospitalController extends Controller
             // Rating score: higher rating = lower cost
             $nRating = 1 - $normalize($hosp->rating, $minRating, $maxRating);
 
-            // Weighted composite cost (lower = better hospital choice)
-            $cost = ($nTotalTime * 0.40) + ($nDist * 0.20) + ($nQueue * 0.10) + ($nResource * 0.15) + ($nRating * 0.15);
+            // Patient History Affinity Bonus
+            $historyVisits = 0;
+            if (!empty($userHistoryHospitals)) {
+                foreach ($userHistoryHospitals as $prevHospName) {
+                    if (strcasecmp(trim($prevHospName), trim($hosp->name)) === 0) {
+                        $historyVisits++;
+                    }
+                }
+            }
+            $historyBonus = $historyVisits > 0 ? min(0.10, $historyVisits * 0.05) : 0.0;
+            $hosp->patient_history_visit_count = $historyVisits;
+
+            // Weighted composite cost (lower = better hospital choice, with patient history bonus reducing cost)
+            $cost = ($nTotalTime * 0.30) + ($nDist * 0.20) + ($nQueue * 0.10) + ($nResource * 0.20) + ($nRating * 0.10) - $historyBonus;
+            $cost = max(0.0, $cost);
 
             $hosp->_sort_cost = round($cost, 6);
             return $hosp;

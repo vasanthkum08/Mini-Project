@@ -8,9 +8,14 @@ class EmergencyAppointment extends Model
 {
     protected $fillable = [
         'user_id',
+        'responder_id',
+        'hospital_id',
         'patient_name',
         'mobile_number',
+        'symptoms',
         'gps_location',
+        'latitude',
+        'longitude',
         'hospital_name',
         'department',
         'appointment_date',

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\EmergencyAppointment;
+use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -17,7 +18,11 @@ class AppointmentController extends Controller
         $validator = Validator::make($request->all(), [
             'patient_name' => 'required|string|max:255',
             'mobile_number' => 'required|string',
+            'symptoms' => 'nullable|string',
             'gps_location' => 'nullable|string|max:255',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+            'hospital_id' => 'nullable|integer',
             'hospital_name' => 'required|string|max:255',
             'department' => 'required|string|max:255',
             'appointment_date' => 'required|date',
@@ -35,12 +40,26 @@ class AppointmentController extends Controller
 
         $user = Auth::guard('api')->user();
 
+        $hospitalId = $request->input('hospital_id');
+        $hospitalName = $request->input('hospital_name');
+
+        if (!$hospitalId && $hospitalName) {
+            $h = \App\Models\Hospital::where('name', $hospitalName)->first();
+            if ($h) {
+                $hospitalId = $h->id;
+            }
+        }
+
         $appointment = EmergencyAppointment::create([
-            'user_id' => $user->id,
+            'user_id' => $user ? $user->id : null,
+            'hospital_id' => $hospitalId,
             'patient_name' => $request->input('patient_name'),
             'mobile_number' => $request->input('mobile_number'),
+            'symptoms' => $request->input('symptoms'),
             'gps_location' => $request->input('gps_location'),
-            'hospital_name' => $request->input('hospital_name'),
+            'latitude' => $request->input('latitude'),
+            'longitude' => $request->input('longitude'),
+            'hospital_name' => $hospitalName,
             'department' => $request->input('department'),
             'appointment_date' => $request->input('appointment_date'),
             'appointment_time' => $request->input('appointment_time'),
@@ -48,9 +67,17 @@ class AppointmentController extends Controller
             'status' => 'Pending'
         ]);
 
+        Notification::create([
+            'user_id' => $user ? $user->id : null,
+            'role' => 'patient',
+            'title' => 'Emergency Request Submitted',
+            'message' => "Emergency appointment request for {$request->input('patient_name')} booked at {$hospitalName} on {$request->input('appointment_date')} at {$request->input('appointment_time')}.",
+            'type' => 'emergency'
+        ]);
+
         return response()->json([
             'success' => true,
-            'message' => 'Emergency Appointment Request Submitted Successfully.',
+            'message' => "Appointment successfully booked at {$hospitalName} on {$request->input('appointment_date')} at {$request->input('appointment_time')}.",
             'data' => $appointment
         ], 201);
     }

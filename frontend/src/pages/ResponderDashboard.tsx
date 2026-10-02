@@ -98,8 +98,10 @@ const ResponderDashboard: React.FC = () => {
         setResponder(data);
         setAvailabilityStatus(data.availability_status || 'Available');
         setAmbulanceStatus(data.ambulance_status || 'Active');
-        setLatitude(data.latitude !== null ? String(data.latitude) : '12.9716');
-        setLongitude(data.longitude !== null ? String(data.longitude) : '77.5946');
+        const hospLat = data.hospital_latitude || (data.hospital?.latitude ?? 9.8850);
+        const hospLng = data.hospital_longitude || (data.hospital?.longitude ?? 78.0820);
+        setLatitude(data.latitude !== null && data.latitude !== undefined ? String(data.latitude) : String(hospLat));
+        setLongitude(data.longitude !== null && data.longitude !== undefined ? String(data.longitude) : String(hospLng));
         setAssignedCases(data.assigned_cases || []);
         setCaseHistory(data.case_history || []);
       }
@@ -259,11 +261,11 @@ const ResponderDashboard: React.FC = () => {
       <nav className="bg-white/90 backdrop-blur-md border-b border-slate-100 shadow-sm sticky top-0 z-50 px-6 lg:px-8 py-3.5">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <HeartPulse className="h-5 w-5 animate-pulse" />
+            <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-400 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 ring-2 ring-emerald-400/20">
+              <HeartPulse className="h-5.5 w-5.5 text-white animate-pulse" />
             </div>
             <div>
-              <span className="text-base font-black text-slate-900 tracking-tight block">AEIS Rescue Console</span>
+              <span className="text-base font-black text-slate-900 tracking-tight block">EMERGENIX-AI Rescue</span>
               <span className="text-[9px] font-black text-emerald-600 block leading-none uppercase tracking-widest">Emergency Responder Terminal</span>
             </div>
           </div>
@@ -578,6 +580,69 @@ const ResponderDashboard: React.FC = () => {
 
               <div className="absolute -right-10 -bottom-10 h-64 w-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
             </div>
+
+            {/* ── ASSIGNED ADMIN HOSPITAL LIVE DATA CARD ────────────────── */}
+            {responder.hospital && (
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-md space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100 font-bold">
+                      🏥
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-black text-slate-900">{responder.hospital.name}</h3>
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-700 font-black text-[9px] uppercase tracking-wider rounded-md border border-blue-100">
+                          Admin Assigned Hospital
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                        📍 {responder.hospital.address || responder.hospital.city}, {responder.hospital.district || responder.hospital.state} • 📞 {responder.hospital.phone || 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 self-start sm:self-auto">
+                    ● Live Admin Telemetry Connected
+                  </span>
+                </div>
+
+                {/* Live Capacity Metrics directly from Admin database */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs font-semibold">
+                  <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">ER Doctors</span>
+                    <span className="text-base font-black text-slate-900">{responder.hospital.available_doctors ?? 0} On Duty</span>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">ICU Beds</span>
+                    <span className="text-base font-black text-slate-900">{responder.hospital.available_icu_beds ?? 0} Vacant</span>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">General Beds</span>
+                    <span className="text-base font-black text-slate-900">{responder.hospital.available_general_beds ?? 0} Vacant</span>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">Emergency Beds</span>
+                    <span className="text-base font-black text-slate-900">{responder.hospital.emergency_beds ?? 0} Ready</span>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">ER Wait Time</span>
+                    <span className="text-base font-black text-amber-600">{responder.hospital.er_wait_minutes ?? 0} mins</span>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-150 p-3 rounded-2xl">
+                    <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">Ambulance Fleet</span>
+                    <span className={`text-base font-black ${responder.hospital.ambulance_available ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {responder.hospital.ambulance_available ? 'Available' : 'Busy'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* ── TABS NAVIGATION (DISPATCH VS CASE HISTORY) ────────────────── */}
             <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">

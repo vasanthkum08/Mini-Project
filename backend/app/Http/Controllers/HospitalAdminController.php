@@ -190,4 +190,42 @@ class HospitalAdminController extends Controller
             ]
         ]);
     }
+
+    /**
+     * Get appointments for the assigned hospital only.
+     */
+    public function getAppointments(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        $requestedId = $request->query('hospital_id');
+        $hospitalId = $requestedId ?: ($user ? $user->hospital_id : null);
+
+        if (!$hospitalId) {
+            $hospital = Hospital::first();
+        } else {
+            $hospital = Hospital::find($hospitalId);
+        }
+
+        if (!$hospital) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hospital record not found.'
+            ], 404);
+        }
+
+        $appointments = \App\Models\EmergencyAppointment::where(function ($q) use ($hospital) {
+            $q->where('hospital_id', $hospital->id)
+              ->orWhere('hospital_name', $hospital->name);
+        })
+        ->orderBy('created_at', 'desc')
+        ->get();
+
+        return response()->json([
+            'success' => true,
+            'hospital_id' => $hospital->id,
+            'hospital_name' => $hospital->name,
+            'count' => $appointments->count(),
+            'data' => $appointments
+        ]);
+    }
 }

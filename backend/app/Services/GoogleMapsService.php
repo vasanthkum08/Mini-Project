@@ -24,65 +24,76 @@ class GoogleMapsService
      */
     public static function geocode(array $addressDetails): ?array
     {
-        $landmark = !empty($addressDetails['landmark']) ? trim($addressDetails['landmark']) : null;
-        $city     = !empty($addressDetails['city']) ? trim($addressDetails['city']) : null;
-        $state    = !empty($addressDetails['state']) ? trim($addressDetails['state']) : null;
-        $pincode  = !empty($addressDetails['pincode']) ? trim($addressDetails['pincode']) : null;
+        $cacheKey = 'geo_' . md5(json_encode($addressDetails));
 
-        // If landmark is explicitly entered by patient, geocode specifically for the landmark/locality
-        if (!empty($landmark)) {
-            $landmarkResult = self::geocodeLandmark($landmark, $city, $state, $pincode);
-            if ($landmarkResult) {
-                return $landmarkResult;
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($addressDetails) {
+            $landmark = !empty($addressDetails['landmark']) ? trim($addressDetails['landmark']) : null;
+            $city     = !empty($addressDetails['city']) ? trim($addressDetails['city']) : null;
+            $state    = !empty($addressDetails['state']) ? trim($addressDetails['state']) : null;
+            $pincode  = !empty($addressDetails['pincode']) ? trim($addressDetails['pincode']) : null;
+
+            // ── Fast Strategy: Try Instant Local Map Match First ───────────
+            $queryParts    = array_filter([$landmark, $city, $state, $pincode]);
+            $addressString = implode(', ', $queryParts);
+            if (!empty($addressString)) {
+                $fallbackRes = self::tryFallback($addressString);
+                if ($fallbackRes && !str_contains($fallbackRes['formatted_address'], 'Default Center')) {
+                    \Log::info('[Geocode] Fast Local Match → ' . $fallbackRes['formatted_address']);
+                    return $fallbackRes;
+                }
             }
-            // Landmark entered but could not be resolved to any valid locality/geocoded spot
-            return [
-                'landmark_found' => false,
-                'is_india'       => true,
-            ];
-        }
 
-        // General address query when no landmark is specified (City + State fallback)
-        $queryParts    = array_filter([$city, $state, $pincode]);
-        $addressString = implode(', ', $queryParts);
-        if (empty($addressString)) {
-            return null;
-        }
+            // If landmark is explicitly entered by patient, geocode specifically for the landmark/locality
+            if (!empty($landmark)) {
+                $landmarkResult = self::geocodeLandmark($landmark, $city, $state, $pincode);
+                if ($landmarkResult) {
+                    return $landmarkResult;
+                }
+                return [
+                    'landmark_found' => false,
+                    'is_india'       => true,
+                ];
+            }
 
-        if (!str_contains(strtolower($addressString), 'india')) {
-            $addressString .= ', India';
-        }
+            if (empty($addressString)) {
+                return null;
+            }
 
-        \Log::info('[Geocode] Resolving general location: ' . $addressString);
+            if (!str_contains(strtolower($addressString), 'india')) {
+                $addressString .= ', India';
+            }
 
-        // ── Strategy 1: Google Maps API ──────────────────────────────────────
-        $apiKey = env('GOOGLE_MAPS_API_KEY');
-        if ($apiKey) {
-            $result = self::tryGoogle($addressString, $apiKey);
+            \Log::info('[Geocode] Resolving general location: ' . $addressString);
+
+            // ── Strategy 1: Google Maps API ──────────────────────────────────────
+            $apiKey = env('GOOGLE_MAPS_API_KEY');
+            if ($apiKey) {
+                $result = self::tryGoogle($addressString, $apiKey);
+                if ($result) {
+                    \Log::info('[Geocode] Google → ' . $result['formatted_address']);
+                    return $result;
+                }
+            }
+
+            // ── Strategy 2: Nominatim (OpenStreetMap) ───────────────────────────
+            $result = self::tryNominatim($addressString);
             if ($result) {
-                \Log::info('[Geocode] Google → ' . $result['formatted_address']);
+                \Log::info('[Geocode] Nominatim → ' . $result['formatted_address']);
                 return $result;
             }
-        }
 
-        // ── Strategy 2: Nominatim (OpenStreetMap) ───────────────────────────
-        $result = self::tryNominatim($addressString);
-        if ($result) {
-            \Log::info('[Geocode] Nominatim → ' . $result['formatted_address']);
+            // ── Strategy 3: Photon (Komoot OSM) ──────────────────────────────────
+            $result = self::tryPhoton($addressString, null, $city);
+            if ($result) {
+                \Log::info('[Geocode] Photon → ' . $result['formatted_address']);
+                return $result;
+            }
+
+            // ── Strategy 4: Fallback Map ──────────────────────────────────────────
+            $result = self::tryFallback($addressString);
+            \Log::info('[Geocode] Fallback → ' . $result['formatted_address']);
             return $result;
-        }
-
-        // ── Strategy 3: Photon (Komoot OSM) ──────────────────────────────────
-        $result = self::tryPhoton($addressString, null, $city);
-        if ($result) {
-            \Log::info('[Geocode] Photon → ' . $result['formatted_address']);
-            return $result;
-        }
-
-        // ── Strategy 4: Fallback Map ──────────────────────────────────────────
-        $result = self::tryFallback($addressString);
-        \Log::info('[Geocode] Fallback → ' . $result['formatted_address']);
-        return $result;
+        });
     }
 
     /**
@@ -588,7 +599,7 @@ class GoogleMapsService
     {
         $apiKey = env('GOOGLE_MAPS_API_KEY');
 
-        // 1. Fast preliminary straight-line distance pass to rank candidates
+        // Fast Haversine & Instant Urban Circuity Calculation
         foreach ($hospitals as $hosp) {
             $lat1 = deg2rad($originLat);
             $lng1 = deg2rad($originLng);
@@ -598,18 +609,27 @@ class GoogleMapsService
             $dlng = $lng2 - $lng1;
             $a = sin($dlat / 2) ** 2 + cos($lat1) * cos($lat2) * sin($dlng / 2) ** 2;
             $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-            $hosp->_direct_km = 6371 * $c;
+            $directKm = 6371 * $c;
+
+            // Apply urban road circuity multiplier (1.25x - 1.35x for city driving)
+            $roadKm = round(max(0.5, $directKm * 1.28), 1);
+            // Average urban emergency transit speed (~30 km/h) -> 2 mins per km
+            $etaMins = max(3, round(($roadKm * 2.1) + 1));
+
+            $hosp->distance_km = $roadKm;
+            $hosp->eta_minutes = $etaMins;
+            $hosp->_direct_km  = $directKm;
         }
 
-        // Sort hospitals by direct distance and take the 5 closest for road-routing calculation
-        $sortedHospitals = $hospitals->sortBy('_direct_km')->values();
+        // Sort hospitals by calculated distance
+        $sortedHospitals = $hospitals->sortBy('distance_km')->values();
         $targetHospitals = $sortedHospitals->take(5);
 
-        // 2. If Google Maps API Key is configured, use Distance Matrix API
+        // Optional: Batch Google Distance Matrix API call if API key configured
         if ($apiKey && $targetHospitals->count() > 0) {
             try {
                 $destinations = $targetHospitals->map(fn($h) => "{$h->latitude},{$h->longitude}")->implode('|');
-                $res = Http::timeout(3)->get('https://maps.googleapis.com/maps/api/distancematrix/json', [
+                $res = Http::timeout(1.5)->get('https://maps.googleapis.com/maps/api/distancematrix/json', [
                     'origins'      => "{$originLat},{$originLng}",
                     'destinations' => $destinations,
                     'key'          => $apiKey,
@@ -631,33 +651,18 @@ class GoogleMapsService
 
                                 $hosp->distance_km = max(0.5, $distKm);
                                 $hosp->eta_minutes = $etaMins;
-                            } else {
-                                self::applyRoadRoutingFallback($originLat, $originLng, $hosp);
                             }
                             $idx++;
                         }
                     }
                 }
             } catch (\Exception $e) {
-                \Log::warning('[DistanceMatrix] Google API failed: ' . $e->getMessage());
+                \Log::warning('[DistanceMatrix] Google API skipped/failed: ' . $e->getMessage());
             }
         }
 
-        // 3. For hospitals without Google API result, query road routing for closest 5
-        $idx = 0;
         foreach ($sortedHospitals as $hosp) {
-            if (!isset($hosp->distance_km)) {
-                if ($idx < 5) {
-                    self::applyRoadRoutingFallback($originLat, $originLng, $hosp);
-                } else {
-                    // For far-away hospitals (> 5th rank), apply urban circuity multiplier (1.8x)
-                    $roadKm = round(($hosp->_direct_km ?? 10) * 1.8, 1);
-                    $hosp->distance_km = max(0.5, $roadKm);
-                    $hosp->eta_minutes = max(3, round(($roadKm * 2.5) + 1));
-                }
-            }
             unset($hosp->_direct_km);
-            $idx++;
         }
 
         return $sortedHospitals;

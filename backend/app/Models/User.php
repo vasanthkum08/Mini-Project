@@ -29,7 +29,6 @@ class User extends Authenticatable implements JWTSubject
     {
         return [
             'email_verified_at' => 'datetime',
-            'password' => 'hashed',
         ];
     }
 
@@ -52,7 +51,16 @@ class User extends Authenticatable implements JWTSubject
 
     public function getRoleAttribute()
     {
-        return $this->roleRelation ? $this->roleRelation->name : 'patient';
+        if ($this->role_id == 2 || $this->hospital_id !== null) {
+            return 'admin';
+        }
+        if ($this->role_id == 3 || (isset($this->attributes['id']) && Responder::where('user_id', $this->attributes['id'])->exists())) {
+            return 'responder';
+        }
+        if ($this->roleRelation) {
+            return strtolower($this->roleRelation->name);
+        }
+        return 'patient';
     }
 
     public function hospital()

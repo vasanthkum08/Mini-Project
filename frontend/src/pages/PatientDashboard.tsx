@@ -523,6 +523,7 @@ const PatientDashboard: React.FC = () => {
         patient_name: user?.name,
         mobile_number: user?.mobile,
         gps_location: gpsText,
+        hospital_id: targetHosp.id,
         hospital_name: targetHosp.name,
         department: aiResult?.recommended_department || "General Medicine",
         appointment_date: appointmentDate,
@@ -549,15 +550,15 @@ const PatientDashboard: React.FC = () => {
       <nav className="bg-white/80 backdrop-blur-md border-b border-slate-100/80 shadow-sm px-8 py-4 sticky top-0 z-50 transition-all">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <HeartPulse className="h-5 w-5 animate-pulse" />
+            <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-cyan-500 text-white flex items-center justify-center shadow-lg shadow-blue-500/30 ring-2 ring-blue-400/20">
+              <HeartPulse className="h-5.5 w-5.5 text-white animate-pulse" />
             </div>
             <div>
               <span className="text-base font-black text-slate-900 tracking-tight block">
-                AEIS Healthcare Portal
+                EMERGENIX-AI Portal
               </span>
               <span className="text-[9px] font-black text-blue-600 block leading-none uppercase tracking-widest">
-                Emergency Intelligence & Recommendation
+                AI Emergency Intelligence System
               </span>
             </div>
           </div>
@@ -1120,7 +1121,7 @@ const PatientDashboard: React.FC = () => {
                                   </a>
                                 )}
                                 <a
-                                  href={`https://www.google.com/maps/dir/?api=1&destination=${hosp.latitude},${hosp.longitude}`}
+                                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ", " + (hosp.address ? hosp.address + ", " : "") + hosp.city)}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
@@ -1901,7 +1902,7 @@ const PatientDashboard: React.FC = () => {
                                     </a>
                                   )}
                                   <a
-                                    href={`https://www.google.com/maps/dir/?api=1&destination=${hosp.latitude},${hosp.longitude}`}
+                                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ", " + (hosp.address ? hosp.address + ", " : "") + hosp.city)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 transition-all"
@@ -2084,7 +2085,7 @@ const PatientDashboard: React.FC = () => {
                                 </a>
                               )}
                               <a
-                                href={`https://www.google.com/maps/dir/?api=1&destination=${hosp.latitude},${hosp.longitude}`}
+                                href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ", " + (hosp.address ? hosp.address + ", " : "") + hosp.city)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10.5px] rounded-xl flex items-center gap-1 transition-all"

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\Responder;
 use App\Models\EmergencyAppointment;
 use App\Models\Hospital;
+use App\Models\Notification;
 
 class ResponderController extends Controller
 {
@@ -37,7 +38,7 @@ class ResponderController extends Controller
     /**
      * Extract latitude and longitude from gps_location string e.g. "Lat: 9.9190, Lng: 78.1335".
      */
-    private function parseCoordsFromString(?string $gpsLoc, float $defaultLat = 12.9716, float $defaultLng = 77.5946): array
+    private function parseCoordsFromString(?string $gpsLoc, float $defaultLat = 9.8850, float $defaultLng = 78.0820): array
     {
         if (!$gpsLoc) {
             return ['lat' => $defaultLat, 'lng' => $defaultLng];
@@ -73,12 +74,15 @@ class ResponderController extends Controller
             ], 404);
         }
 
-        $ambLat = $responder->latitude;
-        $ambLng = $responder->longitude;
-
         // Fetch active assigned cases for this responder or assigned hospital
-        $hospital = $responder->hospital;
+        $hospital = $responder->hospital ?: Hospital::first();
         $hospitalName = $hospital ? $hospital->name : null;
+
+        $fallbackLat = $hospital ? $hospital->latitude : 9.8850;
+        $fallbackLng = $hospital ? $hospital->longitude : 78.0820;
+
+        $ambLat = $responder->latitude ?: $fallbackLat;
+        $ambLng = $responder->longitude ?: $fallbackLng;
 
         $activeQuery = EmergencyAppointment::where(function ($q) use ($responder, $hospitalName) {
             $q->where('responder_id', $responder->id);
@@ -87,12 +91,12 @@ class ResponderController extends Controller
             }
         })->whereNotIn('status', ['Completed', 'Cancelled']);
 
-        $activeCases = $activeQuery->orderBy('updated_at', 'desc')->get()->map(function ($case) use ($ambLat, $ambLng, $hospital) {
+        $activeCases = $activeQuery->orderBy('updated_at', 'desc')->get()->map(function ($case) use ($ambLat, $ambLng, $hospital, $fallbackLat, $fallbackLng) {
             // Patient Lat/Lng
             $patientLat = $case->latitude;
             $patientLng = $case->longitude;
             if (!$patientLat || !$patientLng) {
-                $coords = $this->parseCoordsFromString($case->gps_location, $ambLat ?: 12.9716, $ambLng ?: 77.5946);
+                $coords = $this->parseCoordsFromString($case->gps_location, $ambLat ?: $fallbackLat, $ambLng ?: $fallbackLng);
                 $patientLat = $coords['lat'];
                 $patientLng = $coords['lng'];
             }
@@ -188,6 +192,8 @@ class ResponderController extends Controller
                 'assigned_hospital' => $assignedHospName,
                 'hospital_latitude' => $hospital ? $hospital->latitude : null,
                 'hospital_longitude' => $hospital ? $hospital->longitude : null,
+                'hospital' => $hospital,
+                'all_hospitals' => Hospital::all(),
                 'availability_status' => $responder->availability_status ?: 'Available',
                 'latitude' => $ambLat,
                 'longitude' => $ambLng,
@@ -311,6 +317,14 @@ class ResponderController extends Controller
         } else {
             $responder->update(['availability_status' => 'Busy']);
         }
+
+        Notification::create([
+            'user_id' => $user ? $user->id : null,
+            'role' => 'responder',
+            'title' => 'Ambulance Status Updated',
+            'message' => "Emergency ambulance status updated to '{$status}'.",
+            'type' => 'status'
+        ]);
 
         return response()->json([
             'success' => true,

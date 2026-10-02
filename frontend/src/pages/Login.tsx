@@ -33,7 +33,7 @@ const Login: React.FC = () => {
     "admin1@emergency.com",
   );
   const [selectedResponderEmail, setSelectedResponderEmail] = useState(
-    "responder@emergency.com",
+    "responder1@emergency.com",
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -74,13 +74,13 @@ const Login: React.FC = () => {
   ) => {
     if (demoRole === "patient") {
       setEmail("patient@emergency.com");
-      setPassword("password");
+      setPassword("password123");
     } else if (demoRole === "admin") {
       setEmail(customEmail || selectedAdminEmail);
-      setPassword("password");
+      setPassword("password123");
     } else if (demoRole === "responder") {
       setEmail(customEmail || selectedResponderEmail);
-      setPassword("password");
+      setPassword("password123");
     }
   };
 
@@ -377,50 +377,40 @@ const Login: React.FC = () => {
                   className="w-full bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-2.5 text-[11px] font-bold focus:outline-none focus:border-blue-500 cursor-pointer"
                 >
                   <option value="admin1@emergency.com">
-                    🏢 admin1 (Metro Care Hospital)
+                    🏢 admin1@emergency.com (Apollo Hospital – Madurai)
                   </option>
                   <option value="admin2@emergency.com">
-                    🏢 admin2 (Apex Healthcare)
+                    🏢 admin2@emergency.com (Meenakshi Mission Hospital & Research Centre)
                   </option>
                   <option value="admin3@emergency.com">
-                    🏢 admin3 (National Trauma)
+                    🏢 admin3@emergency.com (Velammal Medical College Hospital – Madurai)
                   </option>
                   <option value="admin4@emergency.com">
-                    🏢 admin4 (City General)
+                    🏢 admin4@emergency.com (Vadamalayan Hospital – Madurai)
                   </option>
                   <option value="admin5@emergency.com">
-                    🏢 admin5 (St. Jude Emergency)
+                    🏢 admin5@emergency.com (Devadoss Multispeciality Hospital – Madurai)
                   </option>
                   <option value="admin6@emergency.com">
-                    🏢 admin6 (Apollo Hospital)
+                    🏢 admin6@emergency.com (Metro Care Hospital)
                   </option>
                   <option value="admin7@emergency.com">
-                    🏢 admin7 (Velammal Hospital)
+                    🏢 admin7@emergency.com (Fortis Clinical Care)
                   </option>
                   <option value="admin8@emergency.com">
-                    🏢 admin8 (Meenakshi Mission)
+                    🏢 admin8@emergency.com (Columbia Asia Emergency)
                   </option>
                   <option value="admin9@emergency.com">
-                    🏢 admin9 (Kauvery Hospital)
+                    🏢 admin9@emergency.com (Manipal Health Center)
                   </option>
                   <option value="admin10@emergency.com">
-                    🏢 admin10 (Bowring Hospital)
+                    🏢 admin10@emergency.com (Sakra World Hospital)
                   </option>
-                  <option value="admin187@emergency.com">
-                    🏢 admin187 (Apollo Hospital – Madurai)
-                  </option>
-                  <option value="admin188@emergency.com">
-                    🏢 admin188 (Meenakshi Mission – Madurai)
-                  </option>
-                  <option value="admin189@emergency.com">
-                    🏢 admin189 (Velammal Medical College – Madurai)
-                  </option>
-                  <option value="admin190@emergency.com">
-                    🏢 admin190 (Vadamalayan Hospital – Madurai)
-                  </option>
-                  <option value="admin191@emergency.com">
-                    🏢 admin191 (Devadoss Multispeciality – Madurai)
-                  </option>
+                  {Array.from({ length: 189 }, (_, idx) => idx + 11).map((num) => (
+                    <option key={`admin-${num}`} value={`admin${num}@emergency.com`}>
+                      🏢 admin{num}@emergency.com (Hospital Admin #{num})
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -437,12 +427,32 @@ const Login: React.FC = () => {
                   }}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-2.5 text-[11px] font-bold focus:outline-none focus:border-blue-500 cursor-pointer"
                 >
-                  <option value="responder@emergency.com">
-                    🚑 Responder A - Officer Jane (Metro Care Hospital, Bangalore - KA-01-ME-9876)
+                  <option value="responder1@emergency.com">
+                    🚑 responder1@emergency.com (Ambulance Unit 1 - Apollo Hospital, Madurai)
                   </option>
                   <option value="responder2@emergency.com">
-                    🚑 Responder B - Officer Vijay (Velammal Hospital, Madurai - TN-59-AM-1108)
+                    🚑 responder2@emergency.com (Ambulance Unit 2 - Meenakshi Mission, Madurai)
                   </option>
+                  <option value="responder3@emergency.com">
+                    🚑 responder3@emergency.com (Ambulance Unit 3 - Velammal Medical College, Madurai)
+                  </option>
+                  <option value="responder4@emergency.com">
+                    🚑 responder4@emergency.com (Ambulance Unit 4 - Vadamalayan Hospital, Madurai)
+                  </option>
+                  <option value="responder5@emergency.com">
+                    🚑 responder5@emergency.com (Ambulance Unit 5 - Devadoss Multispeciality, Madurai)
+                  </option>
+                  <option value="responder6@emergency.com">
+                    🚑 responder6@emergency.com (Ambulance Unit 6 - Government Rajaji Hospital, Madurai)
+                  </option>
+                  <option value="responder7@emergency.com">
+                    🚑 responder7@emergency.com (Ambulance Unit 7 - Metro Care, Bangalore)
+                  </option>
+                  {Array.from({ length: 192 }, (_, idx) => idx + 8).map((num) => (
+                    <option key={`responder-${num}`} value={`responder${num}@emergency.com`}>
+                      🚑 responder{num}@emergency.com (Rescue Unit #{num})
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

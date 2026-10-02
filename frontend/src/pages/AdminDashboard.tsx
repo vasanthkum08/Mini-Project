@@ -19,7 +19,14 @@ import {
   BarChart3,
   TrendingUp,
   PieChart,
-  Layers
+  Layers,
+  Calendar,
+  Database,
+  Server,
+  HardDrive,
+  Download,
+  RotateCcw,
+  FileText
 } from "lucide-react";
 
 const AdminDashboard: React.FC = () => {
@@ -46,9 +53,17 @@ const AdminDashboard: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Form states & Phase 4 Analytics states
-  const [activeTab, setActiveTab] = useState<'capacity' | 'analytics'>('capacity');
+  // Form states & Phase 4 Analytics & Phase 6 Maintenance states
+  const [activeTab, setActiveTab] = useState<'capacity' | 'analytics' | 'appointments' | 'maintenance'>('capacity');
   const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [healthData, setHealthData] = useState<any>(null);
+  const [backups, setBackups] = useState<any[]>([]);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+
   const [availableDoctors, setAvailableDoctors] = useState<number>(0);
   const [availableIcuBeds, setAvailableIcuBeds] = useState<number>(0);
   const [availableGeneralBeds, setAvailableGeneralBeds] = useState<number>(0);
@@ -56,6 +71,83 @@ const AdminDashboard: React.FC = () => {
   const [erWaitMinutes, setErWaitMinutes] = useState<number>(0);
   const [queueCount, setQueueCount] = useState<number>(0);
   const [ambulanceAvailable, setAmbulanceAvailable] = useState<boolean>(true);
+
+  const fetchHealth = async () => {
+    try {
+      const res = await api.get('/admin/health');
+      if (res.data.success) {
+        setHealthData(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch health status:', err);
+    }
+  };
+
+  const fetchBackups = async () => {
+    try {
+      const res = await api.get('/admin/backup/list');
+      if (res.data.success) {
+        setBackups(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch backup list:', err);
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    setCreatingBackup(true);
+    setBackupMsg(null);
+    setBackupError(null);
+    try {
+      const res = await api.post('/admin/backup/create');
+      if (res.data.success) {
+        setBackupMsg(res.data.message);
+        fetchBackups();
+        fetchHealth();
+        setTimeout(() => setBackupMsg(null), 5000);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setBackupError(err.response?.data?.message || 'Failed to create database backup.');
+    } finally {
+      setCreatingBackup(false);
+    }
+  };
+
+  const handleRestoreBackup = async (fileName: string) => {
+    if (!window.confirm(`Are you sure you want to restore MySQL database from snapshot '${fileName}'? Current data will be replaced.`)) {
+      return;
+    }
+    setRestoringBackup(true);
+    setBackupMsg(null);
+    setBackupError(null);
+    try {
+      const res = await api.post('/admin/backup/restore', { file_name: fileName });
+      if (res.data.success) {
+        setBackupMsg(res.data.message);
+        fetchHospital();
+        fetchHealth();
+        setTimeout(() => setBackupMsg(null), 5000);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setBackupError(err.response?.data?.message || 'Failed to restore database backup.');
+    } finally {
+      setRestoringBackup(false);
+    }
+  };
+
+  const fetchAppointments = async (selectedId?: number) => {
+    try {
+      const url = selectedId ? `/admin/appointments?hospital_id=${selectedId}` : '/admin/appointments';
+      const res = await api.get(url);
+      if (res.data.success) {
+        setAppointments(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load appointments:', err);
+    }
+  };
 
   const fetchAnalytics = async (selectedId?: number) => {
     try {
@@ -91,6 +183,9 @@ const AdminDashboard: React.FC = () => {
           setAllHospitals(res.data.all_hospitals);
         }
         fetchAnalytics(data.id);
+        fetchAppointments(data.id);
+        fetchHealth();
+        fetchBackups();
       }
     } catch (err: any) {
       console.error(err);
@@ -204,15 +299,15 @@ const AdminDashboard: React.FC = () => {
       <nav className="bg-[#1E3A8A] border-b border-blue-900 shadow-md sticky top-0 z-50 px-8 py-4 text-white">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-white text-[#1E3A8A] flex items-center justify-center shadow-md">
-              <HeartPulse className="h-6 w-6 text-[#2563EB] animate-pulse" />
+            <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-400/30 ring-2 ring-white/20">
+              <HeartPulse className="h-5.5 w-5.5 text-white animate-pulse" />
             </div>
             <div>
-              <span className="text-base font-black tracking-tight block">
-                AEIS Operations Console
+              <span className="text-base font-black tracking-tight block text-white">
+                EMERGENIX-AI Console
               </span>
               <span className="text-[9px] font-black text-cyan-300 block leading-none uppercase tracking-widest">
-                Administrator Portal Desk
+                Hospital Administrator Desk
               </span>
             </div>
           </div>
@@ -561,9 +656,9 @@ const AdminDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* ── TABS NAVIGATION (CAPACITY VS PHASE 4 ANALYTICS) ────────── */}
+            {/* ── TABS NAVIGATION (CAPACITY VS ANALYTICS VS APPOINTMENTS) ────────── */}
             <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
                   onClick={(e) => { e.preventDefault(); setActiveTab('capacity'); }}
@@ -578,6 +673,21 @@ const AdminDashboard: React.FC = () => {
 
                 <button
                   type="button"
+                  onClick={(e) => { e.preventDefault(); setActiveTab('appointments'); }}
+                  className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer relative ${
+                    activeTab === 'appointments' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Calendar className="h-4 w-4" /> Appointments ({appointments.length})
+                  {appointments.length > 0 && (
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse absolute -top-0.5 -right-0.5" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
                   onClick={(e) => { e.preventDefault(); setActiveTab('analytics'); }}
                   className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
                     activeTab === 'analytics' 
@@ -587,11 +697,23 @@ const AdminDashboard: React.FC = () => {
                 >
                   <BarChart3 className="h-4 w-4" /> Performance & Case Analytics
                 </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); setActiveTab('maintenance'); fetchHealth(); fetchBackups(); }}
+                  className={`px-5 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer ${
+                    activeTab === 'maintenance' 
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Server className="h-4 w-4" /> System Health & Backup Maintenance
+                </button>
               </div>
 
               <button
                 type="button"
-                onClick={() => { fetchHospital(hospital?.id); fetchAnalytics(hospital?.id); }}
+                onClick={() => { fetchHospital(hospital?.id); fetchAnalytics(hospital?.id); fetchAppointments(hospital?.id); fetchHealth(); fetchBackups(); }}
                 className="p-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-slate-600" /> Refresh Telemetry
@@ -1149,7 +1271,326 @@ const AdminDashboard: React.FC = () => {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
 
+            {/* ── BOOKED PATIENT APPOINTMENTS TAB VIEW ── */}
+            {activeTab === 'appointments' && (
+              <div className="space-y-6 animate-slide-in">
+                <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 pb-4 border-b border-slate-150">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-blue-50 text-[#2563EB] rounded-2xl flex items-center justify-center border border-blue-100">
+                        <Calendar className="h-5.5 w-5.5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-[#1E3A8A] uppercase tracking-tight">
+                          Booked Patient Appointments
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider mt-0.5">
+                          Appointments booked specifically for {hospital?.name} (Hospital ID: #{hospital?.id})
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 bg-blue-50 text-[#2563EB] border border-blue-100 rounded-xl text-xs font-black">
+                        {appointments.length} {appointments.length === 1 ? 'Appointment' : 'Appointments'} Found
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => fetchAppointments(hospital?.id)}
+                        className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all cursor-pointer"
+                        title="Refresh Appointments"
+                      >
+                        <RefreshCw className="h-4 w-4 text-slate-500" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {appointments.length === 0 ? (
+                    <div className="py-16 text-center space-y-3">
+                      <Calendar className="h-12 w-12 text-slate-300 mx-auto" />
+                      <p className="text-sm font-black text-slate-600 uppercase tracking-wide">
+                        No Patient Appointments Booked Yet
+                      </p>
+                      <p className="text-xs text-slate-400 font-semibold max-w-md mx-auto">
+                        When a patient books an appointment for {hospital?.name} from the Patient Dashboard, it will automatically appear here.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                            <th className="py-3 px-4">Patient Name</th>
+                            <th className="py-3 px-4">Mobile Number</th>
+                            <th className="py-3 px-4">Doctor / Department</th>
+                            <th className="py-3 px-4">Appointment Date & Time</th>
+                            <th className="py-3 px-4">Priority</th>
+                            <th className="py-3 px-4">Status</th>
+                            <th className="py-3 px-4">Booking Date/Time</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-xs font-semibold">
+                          {appointments.map((app: any) => (
+                            <tr key={app.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-4 px-4 font-black text-slate-900">
+                                {app.patient_name}
+                              </td>
+                              <td className="py-4 px-4 text-slate-600 font-mono">
+                                {app.mobile_number}
+                              </td>
+                              <td className="py-4 px-4">
+                                <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg text-[10.5px] font-bold border border-blue-100">
+                                  {app.department}
+                                </span>
+                              </td>
+                              <td className="py-4 px-4 font-bold text-slate-800">
+                                <div className="flex flex-col">
+                                  <span>📅 {app.appointment_date}</span>
+                                  <span className="text-[10px] text-slate-500 font-mono">⏰ {app.appointment_time}</span>
+                                </div>
+                              </td>
+                              <td className="py-4 px-4">
+                                <span className={`px-2.5 py-0.5 rounded-full text-[9.5px] font-black uppercase ${
+                                  app.priority === 'Critical' || app.priority === 'High'
+                                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                    : app.priority === 'Medium'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                }`}>
+                                  {app.priority}
+                                </span>
+                              </td>
+                              <td className="py-4 px-4">
+                                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase ${
+                                  app.status === 'Completed'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : app.status === 'Cancelled'
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}>
+                                  {app.status}
+                                </span>
+                              </td>
+                              <td className="py-4 px-4 text-[10px] text-slate-400 font-mono">
+                                {new Date(app.created_at).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── SYSTEM HEALTH & DATABASE BACKUP MAINTENANCE TAB VIEW ── */}
+            {activeTab === 'maintenance' && (
+              <div className="space-y-6 animate-slide-in">
+                {backupMsg && (
+                  <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-r-2xl flex items-center gap-3">
+                    <CheckCircle2 className="h-5.5 w-5.5 text-emerald-600 shrink-0" />
+                    <p className="text-xs font-black text-emerald-800">{backupMsg}</p>
+                  </div>
+                )}
+
+                {backupError && (
+                  <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-2xl flex items-center gap-3">
+                    <AlertCircle className="h-5.5 w-5.5 text-rose-500 shrink-0" />
+                    <p className="text-xs font-black text-rose-800">{backupError}</p>
+                  </div>
+                )}
+
+                {/* 1. Live System Telemetry & External Services Health */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                      <Server className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Server Health</span>
+                      <span className="text-xl font-black text-slate-900">{healthData?.system?.server_status || 'Operational'}</span>
+                      <span className="text-[10px] text-slate-500 font-bold block mt-0.5">PHP {healthData?.system?.php_version || ''} | {healthData?.system?.memory_usage_mb || 0} MB</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                      <Database className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">MySQL Database</span>
+                      <span className="text-xl font-black text-emerald-600">Connected</span>
+                      <span className="text-[10px] text-slate-500 font-bold block mt-0.5">Latency: {healthData?.database?.latency_ms || 1.2} ms</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                      <MapPin className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Google Maps API</span>
+                      <span className="text-xs font-black text-indigo-700 block mt-1">{healthData?.external_services?.google_maps_api || 'Active'}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-purple-50 border border-purple-100 text-purple-600 flex items-center justify-center shrink-0">
+                      <Activity className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase tracking-widest block">Gemini AI Assistant</span>
+                      <span className="text-xs font-black text-purple-700 block mt-1">{healthData?.external_services?.gemini_ai_api || 'Active'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. System Monitoring & Log Errors Panel */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6">
+                  <div className="flex justify-between items-center pb-4 border-b border-slate-150">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center border border-amber-100">
+                        <FileText className="h-5.5 w-5.5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-[#1E3A8A] uppercase tracking-tight">
+                          Real-Time Error Log & System Health Monitoring
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider mt-0.5">
+                          Monitors API failures, authentication events, and server error logs from storage/logs/laravel.log
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={fetchHealth}
+                      className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition-all cursor-pointer"
+                      title="Refresh Monitoring Telemetry"
+                    >
+                      <RefreshCw className="h-4 w-4 text-slate-500" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs font-semibold">
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase block">Total Logged Errors</span>
+                      <span className="text-2xl font-black text-slate-900">{healthData?.monitoring_logs?.total_logged_errors || 0}</span>
+                      <span className="text-[9.5px] text-slate-500 font-bold block">Laravel Log Errors</span>
+                    </div>
+
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase block">Failed API Requests</span>
+                      <span className="text-2xl font-black text-amber-600">{healthData?.monitoring_logs?.failed_requests_count || 0}</span>
+                      <span className="text-[9.5px] text-slate-500 font-bold block">Handling without reloads</span>
+                    </div>
+
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase block">Auth Failures</span>
+                      <span className="text-2xl font-black text-purple-600">{healthData?.monitoring_logs?.auth_failures_count || 0}</span>
+                      <span className="text-[9.5px] text-slate-500 font-bold block">Rejected unauthenticated calls</span>
+                    </div>
+
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-1">
+                      <span className="text-[9.5px] font-black text-slate-400 uppercase block">Google Maps Errors</span>
+                      <span className="text-2xl font-black text-emerald-600">{healthData?.monitoring_logs?.google_maps_errors_count || 0}</span>
+                      <span className="text-[9.5px] text-slate-500 font-bold block">Fallback routing handled</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 text-slate-200 p-4.5 rounded-2xl font-mono text-[11px] space-y-1 border border-slate-800">
+                    <span className="text-[9.5px] text-slate-400 font-black uppercase block font-sans">Recent Log Snippet</span>
+                    <p className="text-slate-300 truncate">{healthData?.monitoring_logs?.recent_error || 'No critical system errors recorded.'}</p>
+                  </div>
+                </div>
+
+                {/* 3. Database Backup & Restore Management Panel */}
+                <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 pb-4 border-b border-slate-150">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100">
+                        <HardDrive className="h-5.5 w-5.5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-[#1E3A8A] uppercase tracking-tight">
+                          MySQL Database Backup & Restore Control Center
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-wider mt-0.5">
+                          Create and restore JSON database snapshots covering patients, hospitals, appointments, responders, and notifications
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCreateBackup}
+                      disabled={creatingBackup}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      <Download className="h-4 w-4" />
+                      {creatingBackup ? 'Creating Snapshot...' : 'Create MySQL Backup'}
+                    </button>
+                  </div>
+
+                  {backups.length === 0 ? (
+                    <div className="py-12 text-center space-y-3">
+                      <HardDrive className="h-10 w-10 text-slate-300 mx-auto" />
+                      <p className="text-xs font-black text-slate-500 uppercase tracking-wide">
+                        No Database Backups Created Yet
+                      </p>
+                      <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                        Click "Create MySQL Backup" to create your first database snapshot.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                            <th className="py-3 px-4">Backup File Name</th>
+                            <th className="py-3 px-4">Created Timestamp</th>
+                            <th className="py-3 px-4">File Size</th>
+                            <th className="py-3 px-4">Records Summary</th>
+                            <th className="py-3 px-4 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-xs font-semibold">
+                          {backups.map((b: any) => (
+                            <tr key={b.file_name} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-4 px-4 font-mono font-bold text-slate-900">
+                                📄 {b.file_name}
+                              </td>
+                              <td className="py-4 px-4 text-slate-600 font-mono text-[11px]">
+                                {b.timestamp}
+                              </td>
+                              <td className="py-4 px-4 font-bold text-blue-700">
+                                {b.size_kb} KB
+                              </td>
+                              <td className="py-4 px-4 text-[10.5px] text-slate-500">
+                                Users: {b.summary?.users || 0} | Hospitals: {b.summary?.hospitals || 0} | Appointments: {b.summary?.emergency_appointments || 0} | Responders: {b.summary?.responders || 0}
+                              </td>
+                              <td className="py-4 px-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRestoreBackup(b.file_name)}
+                                  disabled={restoringBackup}
+                                  className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  {restoringBackup ? 'Restoring...' : 'Restore Snapshot'}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

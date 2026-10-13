@@ -59,6 +59,45 @@ const commonSymptoms = [
   "Others",
 ];
 
+const INDIAN_STATES_CITIES: Record<string, string[]> = {
+  "Tamil Nadu": ["Madurai", "Thiruparankundram", "Chennai", "Coimbatore", "Trichy", "Salem", "Tirunelveli", "Vellore", "Erode", "Thanjavur"],
+  "Karnataka": ["Bangalore", "Mysore", "Mangalore", "Hubli", "Belgaum", "Gulbarga"],
+  "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Nashik", "Thane", "Navi Mumbai", "Aurangabad", "Kolhapur"],
+  "Delhi": ["Delhi", "New Delhi", "Noida", "Gurgaon", "Faridabad"],
+  "Kerala": ["Kochi", "Thiruvananthapuram", "Kozhikode", "Thrissur", "Kollam", "Kannur", "Alappuzha"],
+  "Uttar Pradesh": ["Lucknow", "Varanasi", "Agra", "Noida", "Kanpur", "Prayagraj", "Meerut", "Bareilly"],
+  "Rajasthan": ["Jaipur", "Jodhpur", "Udaipur", "Kota", "Bikaner", "Ajmer"],
+  "Gujarat": ["Ahmedabad", "Surat", "Vadodara", "Rajkot", "Gandhinagar", "Bhavnagar"],
+  "West Bengal": ["Kolkata", "Howrah", "Durgapur", "Asansol", "Siliguri"],
+  "Telangana": ["Hyderabad", "Secunderabad", "Warangal", "Nizamabad", "Karimnagar"],
+  "Andhra Pradesh": ["Visakhapatnam", "Vijayawada", "Guntur", "Tirupati", "Nellore", "Kurnool"],
+  "Punjab": ["Chandigarh", "Ludhiana", "Amritsar", "Jalandhar", "Patiala", "Bathinda"],
+  "Haryana": ["Gurgaon", "Faridabad", "Panipat", "Ambala", "Karnal", "Rohtak"],
+  "Madhya Pradesh": ["Bhopal", "Indore", "Gwalior", "Jabalpur", "Ujjain"],
+  "Bihar": ["Patna", "Gaya", "Bhagalpur", "Muzaffarpur"],
+  "Jharkhand": ["Ranchi", "Jamshedpur", "Dhanbad", "Bokaro"],
+  "Odisha": ["Bhubaneswar", "Cuttack", "Rourkela", "Puri"],
+  "Assam": ["Guwahati", "Silchar", "Dibrugarh", "Jorhat"],
+  "Goa": ["Panaji", "Margao", "Vasco da Gama"],
+  "Himachal Pradesh": ["Shimla", "Dharamshala", "Manali", "Solan"],
+  "Uttarakhand": ["Dehradun", "Haridwar", "Rishikesh", "Nainital"],
+  "Chhattisgarh": ["Raipur", "Bhilai", "Bilaspur"],
+  "Jammu & Kashmir": ["Srinagar", "Jammu", "Anantnag"],
+  "Puducherry": ["Pondicherry", "Karaikal"],
+  "Chandigarh": ["Chandigarh"],
+  "Tripura": ["Agartala"],
+  "Meghalaya": ["Shillong"],
+  "Manipur": ["Imphal"],
+  "Mizoram": ["Aizawl"],
+  "Nagaland": ["Kohima", "Dimapur"],
+  "Sikkim": ["Gangtok"],
+  "Arunachal Pradesh": ["Itanagar"],
+  "Ladakh": ["Leh", "Kargil"],
+  "Andaman & Nicobar": ["Port Blair"],
+  "Dadra & Nagar Haveli": ["Daman", "Silvassa"],
+  "Lakshadweep": ["Kavaratti"],
+};
+
 const PatientDashboard: React.FC = () => {
   const { user, logout, checkAuth } = useAuth();
 
@@ -165,9 +204,12 @@ const PatientDashboard: React.FC = () => {
   // Location and search states
   const [locOption, setLocOption] = useState<"gps" | "manual" | null>(null);
   const [fetchingGps, setFetchingGps] = useState(false);
+  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
 
   // Manual Address states
   const [state, setState] = useState("");
+  const [selectedStateFilter, setSelectedStateFilter] = useState<string>("Tamil Nadu");
   const [city, setCity] = useState("");
   const [landmark, setLandmark] = useState("");
   const [pincode, setPincode] = useState("");
@@ -255,6 +297,9 @@ const PatientDashboard: React.FC = () => {
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
+        const acc = pos.coords.accuracy || null;
+        setCurrentCoords({ lat, lng });
+        setGpsAccuracy(acc);
         setFetchingGps(false);
         setGpsText(`Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}`);
 
@@ -262,17 +307,23 @@ const PatientDashboard: React.FC = () => {
         await searchHospitals(lat, lng);
       },
       async (err) => {
-        console.warn(
-          "GPS blocked or timed out, loading simulated Indian location coordinates",
-          err,
-        );
-        const lat = 12.9716;
-        const lng = 77.5946;
+        console.warn("GPS error / denied:", err);
         setFetchingGps(false);
-        setGpsText(`Lat: ${lat} (Bangalore), Lng: ${lng} (Simulated)`);
-        await searchHospitals(lat, lng);
+        if (err.code === 1) {
+          setError(
+            "GPS location access was denied by your browser. Please allow location access in your browser settings, or click 'Select Location' to type your Landmark/City below.",
+          );
+        } else if (err.code === 3) {
+          setError(
+            "GPS signal timed out. Please click 'Select Location' to type your Landmark or City below for instant, exact routing.",
+          );
+        } else {
+          setError(
+            "Unable to acquire GPS position. Please click 'Select Location' to type your Landmark or City below.",
+          );
+        }
       },
-      { enableHighAccuracy: true, timeout: 8000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
     );
   };
 
@@ -308,9 +359,40 @@ const PatientDashboard: React.FC = () => {
   // Manual Location form submission geocoder
   const handleManualLocationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!city) {
-      setError("City name is required.");
+
+    let targetCity = city.trim();
+    let targetState = state.trim();
+    const targetLandmark = landmark.trim();
+
+    // Auto-detect if user entered Thiruparankundram in Landmark field without typing City
+    if (!targetCity && targetLandmark) {
+      if (
+        /thiruparan|tiruparan|thirupparan|parankundram|parankudram/i.test(
+          targetLandmark,
+        )
+      ) {
+        targetCity = "Madurai";
+        targetState = targetState || "Tamil Nadu";
+        setCity("Madurai");
+        if (!state) setState("Tamil Nadu");
+      }
+    }
+
+    if (!targetCity && !targetState && !targetLandmark) {
+      setError("Please select or enter a State, City, or Locality.");
       return;
+    }
+
+    // If city is Thiruparankundram, ensure state is set to Tamil Nadu
+    if (
+      /thiruparan|tiruparan|thirupparan|parankundram|parankudram/i.test(
+        targetCity,
+      )
+    ) {
+      if (!targetState) {
+        targetState = "Tamil Nadu";
+        setState("Tamil Nadu");
+      }
     }
 
     // Cancel any active watch position since manual location is selected
@@ -323,7 +405,10 @@ const PatientDashboard: React.FC = () => {
     setGeocoding(true);
     setHospitals([]);
     setRecommendationReason("");
-    setGpsText(`${city}${state ? ", " + state : ""}, India`);
+    const locDisplay = [targetLandmark, targetCity, targetState, "India"]
+      .filter(Boolean)
+      .join(", ");
+    setGpsText(locDisplay);
 
     const requestType = detectRequestType();
     const isEmergency = requestType === "Emergency";
@@ -350,18 +435,11 @@ const PatientDashboard: React.FC = () => {
           ? "High"
           : aiResult?.emergency_severity || "Medium",
         specialty: aiResult?.recommended_department || "",
-        state,
-        city,
-        landmark,
+        state: targetState,
+        city: targetCity,
+        landmark: targetLandmark,
         pincode,
       };
-
-      const paramKey = JSON.stringify(params);
-      if (lastRequestParamsRef.current === paramKey && hospitals.length > 0) {
-        setGeocoding(false);
-        return;
-      }
-      lastRequestParamsRef.current = paramKey;
 
       const res = await api.get("/hospitals", { params });
       if (res.data.success) {
@@ -374,9 +452,13 @@ const PatientDashboard: React.FC = () => {
 
         if (res.data.data.searched_coords) {
           const coords = res.data.data.searched_coords;
+          setCurrentCoords({
+            lat: Number(coords.latitude),
+            lng: Number(coords.longitude),
+          });
           const addressLabel =
             res.data.data.geocoded_address ||
-            `${landmark ? landmark + ", " : ""}${city}`;
+            [targetLandmark, targetCity, targetState].filter(Boolean).join(", ");
           setGpsText(
             `${addressLabel} (Lat: ${Number(coords.latitude).toFixed(4)}, Lng: ${Number(coords.longitude).toFixed(4)})`,
           );
@@ -413,7 +495,7 @@ const PatientDashboard: React.FC = () => {
       setError(
         err.response?.data?.message ||
           err.message ||
-          "Landmark not found. Please enter a valid landmark or locality.",
+          "Unable to search hospitals. Please check your connection and try again.",
       );
     } finally {
       setGeocoding(false);
@@ -422,6 +504,7 @@ const PatientDashboard: React.FC = () => {
 
   // Search hospitals core method
   const searchHospitals = async (latitude: number, longitude: number) => {
+    setCurrentCoords({ lat: latitude, lng: longitude });
     setError(null);
     setSearchingHospitals(true);
     setHospitals([]);
@@ -468,6 +551,11 @@ const PatientDashboard: React.FC = () => {
         setRecommendationReason(res.data.data.recommendation_reason);
         if (list.length > 0) {
           setSelectedHospital(list[0]);
+        }
+        if (res.data.data.geocoded_address) {
+          setGpsText(
+            `${res.data.data.geocoded_address} (Lat: ${Number(latitude).toFixed(4)}, Lng: ${Number(longitude).toFixed(4)})`,
+          );
         }
 
         // Dynamic navigation routing based on request type
@@ -885,6 +973,16 @@ const PatientDashboard: React.FC = () => {
                     Landmark: {landmark}
                   </span>
                 )}
+                {currentCoords && (
+                  <a
+                    href={`https://www.google.com/maps?q=${currentCoords.lat},${currentCoords.lng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 text-[10px] text-blue-400 hover:text-blue-300 font-bold underline flex items-center gap-1"
+                  >
+                    🗺️ Verify Pin on Google Maps ↗
+                  </a>
+                )}
               </div>
 
               {/* Card 2: Patient Details */}
@@ -1121,7 +1219,11 @@ const PatientDashboard: React.FC = () => {
                                   </a>
                                 )}
                                 <a
-                                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ", " + (hosp.address ? hosp.address + ", " : "") + hosp.city)}`}
+                                  href={`https://www.google.com/maps/dir/?api=1${
+                                    currentCoords
+                                      ? `&origin=${currentCoords.lat},${currentCoords.lng}`
+                                      : ""
+                                  }&destination=${hosp.latitude},${hosp.longitude}&travelmode=driving`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
@@ -1581,6 +1683,50 @@ const PatientDashboard: React.FC = () => {
                     📍 Select Location
                   </button>
                 </div>
+
+                {/* Live GPS Verification Panel */}
+                {currentCoords && locOption === "gps" && (
+                  <div className="max-w-lg mx-auto bg-blue-50/70 border border-blue-200/80 rounded-2xl p-4 text-xs text-slate-700 space-y-2.5 animate-slide-in">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-blue-900 flex items-center gap-1.5 text-xs">
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                        </span>
+                        Live GPS Position Detected
+                      </span>
+                      {gpsAccuracy !== null && (
+                        <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-full border border-blue-100">
+                          Accuracy: ±{Math.round(gpsAccuracy)}m
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-slate-800 font-black text-xs leading-snug">
+                      📍 {gpsText}
+                    </p>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-blue-100">
+                      <a
+                        href={`https://www.google.com/maps?q=${currentCoords.lat},${currentCoords.lng}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-[11px] rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+                      >
+                        🗺️ Verify My Pin on Google Maps ↗
+                      </a>
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        Click to confirm Google Maps pin matches your exact building/street
+                      </span>
+                    </div>
+
+                    {gpsAccuracy !== null && gpsAccuracy > 500 && (
+                      <div className="text-[10.5px] text-amber-800 bg-amber-50/90 border border-amber-200/80 p-2.5 rounded-xl font-medium">
+                        💡 <strong>Wi-Fi / Desktop Location:</strong> Desktop browsers estimate location via internet broadband. If this is not your exact street, click <strong>"Select Location"</strong> to type your Landmark/Area for 100% precision.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* manual form address */}
@@ -1592,57 +1738,130 @@ const PatientDashboard: React.FC = () => {
                   }}
                   className="bg-slate-50/50 rounded-2xl p-5 border border-slate-150 space-y-4 animate-slide-in"
                 >
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                    Search Indian Address Details
-                  </h4>
-                  <div className="grid grid-cols-2 gap-3 text-xs font-semibold text-slate-655 bg-white p-4 rounded-xl border border-slate-100 font-sans">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                      Search Indian Address Details (All States Supported)
+                    </h4>
+                  </div>
+
+                  {/* 1. Quick State Filter Tabs */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">
+                        Quick Select State:
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 max-h-24 overflow-y-auto pr-1">
+                      {[
+                        "Tamil Nadu",
+                        "Karnataka",
+                        "Maharashtra",
+                        "Delhi",
+                        "Kerala",
+                        "Uttar Pradesh",
+                        "Rajasthan",
+                        "Gujarat",
+                        "West Bengal",
+                        "Telangana",
+                        "Andhra Pradesh",
+                        "Punjab",
+                        "Haryana",
+                        "Madhya Pradesh",
+                        "Bihar",
+                        "Odisha",
+                        "Assam",
+                        "Goa",
+                        "Uttarakhand",
+                        "Himachal Pradesh",
+                        "Chhattisgarh",
+                        "Jharkhand",
+                      ].map((st) => {
+                        const isSelected = (state === st || selectedStateFilter === st);
+                        return (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => {
+                              setSelectedStateFilter(st);
+                              setState(st);
+                              setCity("");
+                              setLandmark("");
+                            }}
+                            className={`px-2.5 py-1 text-[10px] font-bold rounded-lg cursor-pointer transition-all border ${
+                              isSelected
+                                ? "bg-blue-600 text-white border-blue-600 shadow-xs"
+                                : "bg-white text-slate-650 hover:bg-slate-100 border-slate-200"
+                            }`}
+                          >
+                            {st}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 2. Primary Landmark / Incident Location Input */}
+                  <div className="bg-white p-3.5 rounded-xl border-2 border-blue-200/80 shadow-xs space-y-1.5">
+                    <label className="block text-[11px] font-black text-slate-800 flex items-center gap-1.5">
+                      <span className="text-base text-red-500">📍</span> Enter Landmark / Area / Location:
+                    </label>
+                    <input
+                      type="text"
+                      value={landmark}
+                      onChange={(e) => setLandmark(e.target.value)}
+                      placeholder="e.g. Thiruparankundram, Simmakkal, Goripalayam, Anna Nagar, Periyar Bus Stand..."
+                      className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2.5 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:bg-white transition-all"
+                    />
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      Whichever landmark or locality you type will be set as your incident location and matched with real driving routes.
+                    </p>
+                  </div>
+
+                  {/* 3. Optional State, City & Pincode Inputs */}
+                  <div className="grid grid-cols-3 gap-2.5 text-xs font-semibold text-slate-655 bg-white p-3.5 rounded-xl border border-slate-100 font-sans">
                     <div>
                       <label className="block text-[10px] text-slate-500 mb-0.5">
-                        City
+                        State (Optional)
+                      </label>
+                      <select
+                        value={state}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setState(val);
+                          setSelectedStateFilter(val);
+                        }}
+                        className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      >
+                        <option value="">-- All States --</option>
+                        {Object.keys(INDIAN_STATES_CITIES).map((st) => (
+                          <option key={st} value={st}>
+                            {st}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-500 mb-0.5">
+                        City (Optional)
                       </label>
                       <input
                         type="text"
                         value={city}
                         onChange={(e) => setCity(e.target.value)}
-                        placeholder="e.g. Bangalore"
-                        className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">
-                        State
-                      </label>
-                      <input
-                        type="text"
-                        value={state}
-                        onChange={(e) => setState(e.target.value)}
-                        placeholder="e.g. Karnataka"
+                        placeholder="e.g. Madurai..."
                         className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] text-slate-500 mb-0.5">
-                        Landmark
-                      </label>
-                      <input
-                        type="text"
-                        value={landmark}
-                        onChange={(e) => setLandmark(e.target.value)}
-                        placeholder="e.g. MG Road Station"
-                        className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2 text-xs focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">
-                        Pincode
+                        Pincode (Optional)
                       </label>
                       <input
                         type="text"
                         value={pincode}
                         onChange={(e) => setPincode(e.target.value)}
-                        placeholder="e.g. 560001"
-                        className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2 text-xs focus:outline-none"
+                        placeholder="e.g. 625001"
+                        className="w-full border border-slate-200 bg-slate-50/50 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                       />
                     </div>
                   </div>
@@ -1902,7 +2121,11 @@ const PatientDashboard: React.FC = () => {
                                     </a>
                                   )}
                                   <a
-                                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ", " + (hosp.address ? hosp.address + ", " : "") + hosp.city)}`}
+                                    href={`https://www.google.com/maps/dir/?api=1${
+                                      currentCoords
+                                        ? `&origin=${currentCoords.lat},${currentCoords.lng}`
+                                        : ""
+                                    }&destination=${hosp.latitude},${hosp.longitude}&travelmode=driving`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 transition-all"
@@ -2085,7 +2308,11 @@ const PatientDashboard: React.FC = () => {
                                 </a>
                               )}
                               <a
-                                href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(hosp.name + ", " + (hosp.address ? hosp.address + ", " : "") + hosp.city)}`}
+                                href={`https://www.google.com/maps/dir/?api=1${
+                                  currentCoords
+                                    ? `&origin=${currentCoords.lat},${currentCoords.lng}`
+                                    : ""
+                                }&destination=${hosp.latitude},${hosp.longitude}&travelmode=driving`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10.5px] rounded-xl flex items-center gap-1 transition-all"

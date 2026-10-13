@@ -22,34 +22,28 @@ class HospitalController extends Controller
         $specialty = $request->input('specialty');
         $geocodedAddress = null;
 
+        $cityInput     = trim($request->input('city', ''));
+        $landmarkInput = trim($request->input('landmark', ''));
+        $stateInput    = trim($request->input('state', ''));
+
         // Geocode manual details if coordinates are missing — always fresh, never cached
         if ($lat === null || $lng === null) {
-            $cityInput     = trim($request->input('city', ''));
-            $landmarkInput = trim($request->input('landmark', ''));
-
-            if (empty($cityInput) && empty($landmarkInput)) {
+            if (empty($cityInput) && empty($landmarkInput) && empty($stateInput)) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'City name is required for manual location search.'
+                    'message' => 'Please enter a State, City, or Landmark for manual location search.'
                 ], 422);
             }
 
             $addressDetails = [
-                'state'    => $request->input('state'),
-                'city'     => $cityInput,
-                'landmark' => $landmarkInput,
+                'state'    => $stateInput ?: null,
+                'city'     => $cityInput ?: null,
+                'landmark' => $landmarkInput ?: null,
                 'pincode'  => $request->input('pincode')
             ];
 
             $geoResult = GoogleMapsService::geocode($addressDetails);
             if ($geoResult) {
-                if (isset($geoResult['landmark_found']) && $geoResult['landmark_found'] === false) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Landmark not found. Please enter a valid landmark or locality.'
-                    ], 422);
-                }
-
                 if (!$geoResult['is_india']) {
                     return response()->json([
                         'success' => false,
@@ -72,6 +66,20 @@ class HospitalController extends Controller
                     'message' => 'This application currently supports emergency services only within India.'
                 ], 422);
             }
+
+            // If coordinates provided (e.g. live GPS), reverse-geocode to identify user's locality, city, and state
+            if (empty($geocodedAddress)) {
+                $rev = GoogleMapsService::reverseGeocode($latVal, $lngVal);
+                if ($rev) {
+                    $geocodedAddress = $rev['formatted_address'] ?? null;
+                    if (empty($cityInput) && !empty($rev['city'])) {
+                        $cityInput = $rev['city'];
+                    }
+                    if (empty($stateInput) && !empty($rev['state'])) {
+                        $stateInput = $rev['state'];
+                    }
+                }
+            }
         } else {
             // Default center coordinates fallback (Bangalore, India)
             $lat = 12.9716;
@@ -80,16 +88,123 @@ class HospitalController extends Controller
 
         $hospitals = Hospital::all();
 
-        // 1. Calculate precise road distances for ALL hospitals and attach ETA
+        // 1. Calculate precise road distances for ALL candidate hospitals and attach ETA
         $withDistances = GoogleMapsService::calculateDistances(floatval($lat), floatval($lng), $hospitals);
 
-        // 2. Filter: open hospitals within 100km
-        $processed = $withDistances->filter(function ($hosp) {
-            return strtolower($hosp->hospital_status) === 'open' && $hosp->distance_km <= 100;
-        });
+        $cityAliases = [
+            'trichy'             => ['trichy', 'tiruchirappalli', 'tiruchi'],
+            'tiruchirappalli'    => ['trichy', 'tiruchirappalli', 'tiruchi'],
+            'tiruchi'            => ['trichy', 'tiruchirappalli', 'tiruchi'],
+            'madurai'            => ['madurai'],
+            'chennai'            => ['chennai', 'madras'],
+            'coimbatore'         => ['coimbatore', 'kovai'],
+            'salem'              => ['salem'],
+            'bangalore'          => ['bangalore', 'bengaluru'],
+            'bengaluru'          => ['bangalore', 'bengaluru'],
+            'mysore'             => ['mysore', 'mysuru'],
+            'mysuru'             => ['mysore', 'mysuru'],
+            'mumbai'             => ['mumbai', 'bombay'],
+            'pune'               => ['pune'],
+            'nagpur'             => ['nagpur'],
+            'delhi'              => ['delhi', 'new delhi'],
+            'gurgaon'            => ['gurgaon', 'gurugram'],
+            'gurugram'           => ['gurgaon', 'gurugram'],
+            'noida'              => ['noida'],
+            'faridabad'          => ['faridabad'],
+            'jaipur'             => ['jaipur'],
+            'jodhpur'            => ['jodhpur'],
+            'udaipur'            => ['udaipur'],
+            'ahmedabad'          => ['ahmedabad'],
+            'surat'              => ['surat'],
+            'vadodara'           => ['vadodara', 'baroda'],
+            'chandigarh'         => ['chandigarh'],
+            'ludhiana'           => ['ludhiana'],
+            'amritsar'           => ['amritsar'],
+            'visakhapatnam'      => ['visakhapatnam', 'vizag'],
+            'vizag'              => ['visakhapatnam', 'vizag'],
+            'vijayawada'         => ['vijayawada'],
+            'hyderabad'          => ['hyderabad'],
+            'warangal'           => ['warangal'],
+            'kochi'              => ['kochi', 'cochin'],
+            'thiruvananthapuram' => ['thiruvananthapuram', 'trivandrum'],
+            'trivandrum'         => ['thiruvananthapuram', 'trivandrum'],
+            'kozhikode'          => ['kozhikode', 'calicut'],
+            'calicut'            => ['kozhikode', 'calicut'],
+            'kolkata'            => ['kolkata', 'calcutta'],
+            'lucknow'            => ['lucknow'],
+            'varanasi'           => ['varanasi', 'banaras', 'kashi'],
+            'agra'               => ['agra'],
+            'bhopal'             => ['bhopal'],
+            'indore'             => ['indore'],
+            'patna'              => ['patna'],
+            'ranchi'             => ['ranchi'],
+            'bhubaneswar'        => ['bhubaneswar'],
+            'guwahati'           => ['guwahati'],
+            'panaji'             => ['panaji', 'goa'],
+            'shimla'             => ['shimla'],
+            'dehradun'           => ['dehradun', 'rishikesh'],
+            'raipur'             => ['raipur'],
+        ];
 
-        // 3. Fallback: if nothing within 100km, take the 10 CLOSEST open hospitals
-        //    (avoids returning 59 random hospitals ranked by wait time rather than distance)
+        // Infer cityInput if empty but landmark mentions a known city
+        if (empty($cityInput) && !empty($landmarkInput)) {
+            $landmarkLower = strtolower($landmarkInput);
+            foreach ($cityAliases as $cKey => $aliases) {
+                foreach ($aliases as $alias) {
+                    if (str_contains($landmarkLower, $alias)) {
+                        $cityInput = $cKey;
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        $processed = collect();
+
+        // 2. Priority 1: If City is specified, STRICTLY filter open hospitals in that city!
+        if (!empty($cityInput)) {
+            $normCity = strtolower(trim($cityInput));
+            $allowedAliases = $cityAliases[$normCity] ?? [$normCity];
+
+            $cityMatches = $withDistances->filter(function ($hosp) use ($allowedAliases) {
+                if (strtolower($hosp->hospital_status) !== 'open') {
+                    return false;
+                }
+                $hospCityLower = strtolower(trim($hosp->city));
+                foreach ($allowedAliases as $alias) {
+                    if ($hospCityLower === $alias || str_contains($hospCityLower, $alias) || str_contains($alias, $hospCityLower)) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+
+            if ($cityMatches->isNotEmpty()) {
+                $processed = $cityMatches;
+            }
+        }
+
+        // 3. Priority 2: If City was not specified or had no direct matches, but State was specified:
+        if ($processed->isEmpty() && !empty($stateInput)) {
+            $stateMatches = $withDistances->filter(function ($hosp) use ($stateInput) {
+                return strtolower($hosp->hospital_status) === 'open' &&
+                    (strcasecmp(trim($hosp->state), $stateInput) === 0 || str_contains(strtolower($hosp->state), strtolower($stateInput)));
+            });
+            if ($stateMatches->isNotEmpty()) {
+                // If patient searched from a specific locality, prioritize local hospitals (within 60km)
+                $nearbyInState = $stateMatches->filter(fn($h) => $h->distance_km <= 60);
+                $processed = $nearbyInState->isNotEmpty() ? $nearbyInState : $stateMatches;
+            }
+        }
+
+        // 4. Priority 3: Fallback by distance radius (within 60km)
+        if ($processed->isEmpty()) {
+            $processed = $withDistances->filter(function ($hosp) {
+                return strtolower($hosp->hospital_status) === 'open' && $hosp->distance_km <= 60;
+            });
+        }
+
+        // 5. Ultimate fallback: closest 10 open hospitals
         if ($processed->isEmpty()) {
             $processed = $withDistances
                 ->filter(fn($h) => strtolower($h->hospital_status) === 'open')

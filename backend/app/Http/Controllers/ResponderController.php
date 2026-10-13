@@ -17,21 +17,10 @@ class ResponderController extends Controller
      */
     private function computeDistanceAndEta(float $lat1, float $lng1, float $lat2, float $lng2): array
     {
-        $earthRadius = 6371; // km
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLon = deg2rad($lng2 - $lng1);
-        $a = sin($dLat / 2) * sin($dLat / 2) +
-             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
-             sin($dLon / 2) * sin($dLon / 2);
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-        $dist = round($earthRadius * $c, 1);
-        if ($dist < 0.5) {
-            $dist = 0.5;
-        }
-        $eta = max(1, (int)ceil(($dist / 35.0) * 60)); // Avg speed 35 km/h
+        $dir = \App\Services\GoogleMapsService::getDirections($lat1, $lng1, $lat2, $lng2);
         return [
-            'distance_km' => $dist,
-            'eta_minutes' => $eta
+            'distance_km' => $dir['distance_km'],
+            'eta_minutes' => $dir['eta_minutes']
         ];
     }
 

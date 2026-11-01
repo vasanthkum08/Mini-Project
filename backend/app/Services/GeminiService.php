@@ -61,8 +61,16 @@ class GeminiService
             }
         }
 
-        // Rule-Based Enhanced Clinical Triage Fallback
-        $textLower = strtolower($symptomsText);
+        // Rule-Based Enhanced Multilingual Clinical Triage Fallback (English, Tamil & Tanglish)
+        $textLower = mb_strtolower($symptomsText, 'UTF-8');
+        
+        $containsAny = function(array $words) use ($textLower) {
+            foreach ($words as $w) {
+                if (str_contains($textLower, mb_strtolower($w, 'UTF-8'))) return true;
+            }
+            return false;
+        };
+
         $possible_condition = 'General Fatigue & Dehydration';
         $emergency_severity = 'Low';
         $triage_level = 'Level 4 - Low (Non-Urgent)';
@@ -74,8 +82,11 @@ class GeminiService
             'Keep hydrated with oral rehydration fluids.',
             'Consult a primary care physician if symptoms persist.'
         ];
+        $voice_summary_en = 'Low severity condition detected. Recommended department is General Medicine. Rest comfortably and stay hydrated.';
+        $voice_summary_ta = 'பொதுவான உடல் சோர்வு மற்றும் நீர்ச்சத்து குறைவு கண்டறியப்பட்டுள்ளது. பொது மருத்துவரை அணுகவும். ஓய்வெடுத்து போதுமான தண்ணீர் குடிக்கவும்.';
 
-        if (str_contains($textLower, 'chest pain') || str_contains($textLower, 'heart') || str_contains($textLower, 'cardiac')) {
+        // 1. Chest Pain & Heart Attack (English, Tamil & Tanglish)
+        if ($containsAny(['chest', 'heart', 'cardiac', 'angina', 'palpitation', 'tightness', 'crushing', 'நெஞ்சு', 'இதயம்', 'மாரடைப்பு', 'படபடப்பு', 'nenju', 'nenjil', 'maradaippu', 'marbadaippu', 'padapadappu'])) {
             $possible_condition = 'Acute Coronary Syndrome / Myocardial Infarction';
             $emergency_severity = 'High';
             $triage_level = 'Level 1 - Critical (Immediate Resuscitation)';
@@ -87,7 +98,11 @@ class GeminiService
                 'Loosen any tight clothing around the neck and chest.',
                 'Keep calm and administer sublingual Aspirin if prescribed.'
             ];
-        } elseif (str_contains($textLower, 'stroke') || str_contains($textLower, 'numbness') || str_contains($textLower, 'paralysis') || str_contains($textLower, 'speech')) {
+            $voice_summary_en = 'Critical High Severity Emergency detected: Possible Heart Attack or Acute Coronary Syndrome. Recommended department: Cardiology. Sit upright, loosen tight clothing, and call emergency services immediately.';
+            $voice_summary_ta = 'உயிர் காக்கும் அவசர நிலை கண்டறியப்பட்டுள்ளது: மாரடைப்பு அல்லது கடுமையான நெஞ்சு வலி. பரிந்துரைக்கப்பட்ட துறை: இதயவியல். நோயாளியை அமைதியாக சாய்ந்து உட்கார வைக்கவும், ஆம்புலன்ஸை உடனடியாக அழைக்கவும்.';
+        
+        // 2. Stroke, Paralysis & Unconsciousness
+        } elseif ($containsAny(['stroke', 'numbness', 'paralysis', 'speech', 'slurred', 'unconscious', 'faint', 'blackout', 'collapse', 'பக்கவாதம்', 'மரத்து', 'வாய் கோணல்', 'மயக்கம்', 'சுயநினைவு', 'pakkavatham', 'marathu', 'mayakkam'])) {
             $possible_condition = 'Acute Ischemic Stroke / Cerebrovascular Event';
             $emergency_severity = 'High';
             $triage_level = 'Level 1 - Critical (Immediate Resuscitation)';
@@ -99,7 +114,11 @@ class GeminiService
                 'Do not give anything by mouth (risk of aspiration).',
                 'Note exact time of symptom onset for thrombolytic window.'
             ];
-        } elseif (str_contains($textLower, 'breath') || str_contains($textLower, 'asthma') || str_contains($textLower, 'suffocation')) {
+            $voice_summary_en = 'Critical High Severity Emergency detected: Possible Stroke or Neurological Event. Recommended department: Neurology. Keep head elevated, do not give water or food, reach hospital immediately.';
+            $voice_summary_ta = 'அதி தீவிர நரம்பியல் அவசர நிலை கண்டறியப்பட்டுள்ளது: பக்கவாதம் அல்லது சுயநினைவின்மை. பரிந்துரைக்கப்பட்ட துறை: நரம்பியல். தலையை சற்று உயர்த்தி படுக்க வைக்கவும், வாயில் எதுவும் கொடுக்க வேண்டாம்.';
+
+        // 3. Respiratory & Breathing Trouble
+        } elseif ($containsAny(['breath', 'asthma', 'suffocation', 'wheez', 'chok', 'airway', 'dyspnea', 'மூச்சு', 'திணறல்', 'சுவாசம்', 'அடைப்பு', 'moochu', 'thinaral'])) {
             $possible_condition = 'Acute Respiratory Distress / Severe Bronchospasm';
             $emergency_severity = 'High';
             $triage_level = 'Level 2 - High (Emergency Care)';
@@ -111,7 +130,11 @@ class GeminiService
                 'Administer supplemental oxygen or prescribed bronchodilator inhaler.',
                 'Ensure well-ventilated, calm environment.'
             ];
-        } elseif (str_contains($textLower, 'accident') || str_contains($textLower, 'fracture') || str_contains($textLower, 'bone') || str_contains($textLower, 'injury')) {
+            $voice_summary_en = 'High Severity Emergency: Acute Respiratory Distress. Recommended department: Pulmonology or Emergency Medicine. Sit upright and use prescribed inhaler or oxygen.';
+            $voice_summary_ta = 'தீவிர சுவாச அவசர நிலை: கடுமையான மூச்சுத் திணறல். பரிந்துரைக்கப்பட்ட துறை: சுவாசவியல் அல்லது பொது மருத்துவம். நேராக உட்கார வைத்து நன்கு காற்றோட்டமான இடத்தில் வைக்கவும்.';
+
+        // 4. Accidents, Poly-Trauma & Fractures
+        } elseif ($containsAny(['accident', 'fracture', 'bone', 'injury', 'trauma', 'crash', 'collision', 'broken', 'fall', 'bike', 'car', 'விபத்து', 'எலும்பு', 'முறிவு', 'காயம்', 'vibathu', 'vabathu', 'elumbu', 'murivu', 'odinju'])) {
             $possible_condition = 'Severe Skeletal Trauma / Complex Fracture';
             $emergency_severity = 'Medium';
             $triage_level = 'Level 2 - High (Emergency Care)';
@@ -123,7 +146,11 @@ class GeminiService
                 'Apply ice wrapped in cloth to reduce swelling.',
                 'Elevate injured extremity above heart level if no spinal trauma.'
             ];
-        } elseif (str_contains($textLower, 'bleed') || str_contains($textLower, 'hemorrhage') || str_contains($textLower, 'cut')) {
+            $voice_summary_en = 'Urgent Orthopedic Trauma condition detected: Possible Bone Fracture or Accident Injury. Recommended department: Orthopedics or Trauma. Do not move injured limb.';
+            $voice_summary_ta = 'விபத்து அல்லது எலும்பு முறிவு காயம் கண்டறியப்பட்டுள்ளது. பரிந்துரைக்கப்பட்ட துறை: எலும்பியல் அல்லது அவசர சிகிச்சை பிரிவு. பாதிக்கப்பட்ட கையை அல்லது காலை அசைக்காமல் வையுங்கள்.';
+
+        // 5. Active Bleeding & Wounds
+        } elseif ($containsAny(['bleed', 'hemorrhage', 'cut', 'blood', 'wound', 'laceration', 'ரத்தம்', 'இரத்தம்', 'வெட்டு', 'ratham', 'iratham'])) {
             $possible_condition = 'Acute Laceration / Arterial Hemorrhagic Bleeding';
             $emergency_severity = 'Medium';
             $triage_level = 'Level 2 - High (Emergency Care)';
@@ -135,7 +162,11 @@ class GeminiService
                 'Elevate bleeding site above heart level.',
                 'Apply pressure dressing once hemorrhage slows.'
             ];
-        } elseif (str_contains($textLower, 'burn') || str_contains($textLower, 'fire')) {
+            $voice_summary_en = 'Urgent Bleeding condition detected: Acute Laceration. Recommended department: Trauma Surgery. Apply continuous direct pressure with clean cloth.';
+            $voice_summary_ta = 'அதிக ரத்தப்போக்கு அல்லது ஆழமான வெட்டுக்காயம் கண்டறியப்பட்டுள்ளது. பரிந்துரைக்கப்பட்ட துறை: அவசர சிகிச்சை. காயத்தின் மீது சுத்தமான துணியை வைத்து அழுத்தமாகப் பிடிக்கவும்.';
+
+        // 6. Thermal Burns & Fire
+        } elseif ($containsAny(['burn', 'fire', 'scald', 'acid', 'thee', 'theekayam', 'தீக்காயம்', 'தீ', 'வெந்து'])) {
             $possible_condition = 'Thermal Burns (Partial/Full Thickness)';
             $emergency_severity = 'Medium';
             $triage_level = 'Level 3 - Moderate (Urgent Care)';
@@ -147,19 +178,11 @@ class GeminiService
                 'Avoid applying ice, ointments, or home remedies.',
                 'Cover loosely with dry, sterile non-adherent dressing.'
             ];
-        } elseif (str_contains($textLower, 'fever') || str_contains($textLower, 'infection') || str_contains($textLower, 'flu')) {
-            $possible_condition = 'Acute Febrile Syndrome / Systemic Viral Infection';
-            $emergency_severity = 'Low';
-            $triage_level = 'Level 4 - Low (Non-Urgent)';
-            $risk_score = 35;
-            $recommended_department = 'General Medicine';
-            $recommended_tests = ['Complete Blood Count', 'C-Reactive Protein (CRP)', 'Dengue NS1 Antigen Panel'];
-            $first_aid = [
-                'Apply cool water sponges to forehead and neck.',
-                'Administer oral antipyretic (Paracetamol) as guided.',
-                'Maintain high fluid intake and bed rest.'
-            ];
-        } elseif (str_contains($textLower, 'snake') || str_contains($textLower, 'bite') || str_contains($textLower, 'venom')) {
+            $voice_summary_en = 'Thermal Burn injury detected. Recommended department: Plastic & Burn Surgery. Cool under running water immediately for 15 minutes.';
+            $voice_summary_ta = 'தீக்காயம் அல்லது கொதிநீர் காயம் கண்டறியப்பட்டுள்ளது. பரிந்துரைக்கப்பட்ட துறை: தீக்காய பிரிவு. எரியும் பகுதியில் 15 நிமிடங்கள் குளிர்ந்த ஓடும் நீரை ஊற்றவும்.';
+
+        // 7. Snake Bites & Toxic Venom
+        } elseif ($containsAny(['snake', 'bite', 'venom', 'sting', 'scorpion', 'பாம்பு', 'கடி', 'விஷம்', 'தேள்', 'paambu', 'pambu', 'visham', 'kadi'])) {
             $possible_condition = 'Ophitoxemia (Venomous Snake Envenomation)';
             $emergency_severity = 'High';
             $triage_level = 'Level 1 - Critical (Immediate Resuscitation)';
@@ -171,11 +194,31 @@ class GeminiService
                 'Immobilize affected bitten limb below heart level.',
                 'Avoid incising, sucking, or applying tourniquets to the bite.'
             ];
-        } elseif (str_contains($textLower, 'food') || str_contains($textLower, 'poison') || str_contains($textLower, 'vomit')) {
-            $possible_condition = 'Acute Gastroenteritis (Toxic Food Contamination)';
-            $emergency_severity = 'Low';
-            $triage_level = 'Level 4 - Low (Non-Urgent)';
-            $risk_score = 40;
+            $voice_summary_en = 'Critical High Severity Emergency: Venomous Snake Bite. Recommended department: Emergency Trauma. Keep patient completely still, do not cut or tie wound, rush to hospital immediately.';
+            $voice_summary_ta = 'உயிர் காக்கும் அவசர நிலை: பாம்பு அல்லது விஷக்கடி. பரிந்துரைக்கப்பட்ட துறை: அவசர நச்சுமுறிவு பிரிவு. நோயாளியை முற்றிலும் அசையாமல் வைக்கவும், உடனடியாக மருத்துவமனைக்கு செல்லவும்.';
+
+        // 8. Pregnancy & Active Labor
+        } elseif ($containsAny(['pregnancy', 'labor', 'delivery', 'contraction', 'maternity', 'பிரசவம்', 'கர்ப்பம்', 'பிரசவ வலி', 'prasavam', 'garbham', 'prasava vali'])) {
+            $possible_condition = 'Obstetric Emergency / Active Labor Contractions';
+            $emergency_severity = 'High';
+            $triage_level = 'Level 1 - Critical (Immediate Resuscitation)';
+            $risk_score = 90;
+            $recommended_department = 'Maternity';
+            $recommended_tests = ['Cardiotocography (CTG)', 'Obstetric Ultrasound', 'Maternal Complete Blood Count'];
+            $first_aid = [
+                'Support patient in left lateral tilt position.',
+                'Time contraction intervals and monitor for rupture of membranes.',
+                'Transport immediately to the nearest maternity hospital.'
+            ];
+            $voice_summary_en = 'Critical Obstetric Emergency: Active Labor or Pregnancy Complication. Recommended department: Obstetrics & Gynecology. Transport immediately to maternity emergency.';
+            $voice_summary_ta = 'மகப்பேறு அவசர நிலை: பிரசவ வலி அல்லது கர்ப்பகால அவசரம். பரிந்துரைக்கப்பட்ட துறை: மகளிர் மற்றும் மகப்பேறு பிரிவு. நோயாளியை இடது பக்கம் திருப்பி படுக்க வைத்து உடனடியாக மருத்துவமனைக்கு அழைத்துச் செல்லவும்.';
+
+        // 9. Food Poisoning & Severe Dehydration
+        } elseif ($containsAny(['food poison', 'poison', 'vomit', 'diarrhea', 'gastro', 'stomach', 'belly', 'appendix', 'வாந்தி', 'வயிற்றுப்போக்கு', 'வயிற்று வலி', 'vanthi', 'vayiru vali'])) {
+            $possible_condition = 'Acute Gastroenteritis / Dehydration';
+            $emergency_severity = 'Medium';
+            $triage_level = 'Level 3 - Moderate (Urgent Care)';
+            $risk_score = 55;
             $recommended_department = 'General Medicine';
             $recommended_tests = ['Stool Routine & Culture', 'Serum Electrolytes', 'Blood Urea Nitrogen'];
             $first_aid = [
@@ -183,6 +226,24 @@ class GeminiService
                 'Avoid solid foods, dairy, and caffeinated beverages.',
                 'Monitor for signs of severe dehydration.'
             ];
+            $voice_summary_en = 'Gastrointestinal condition detected: Food Poisoning or Severe Vomiting. Recommended department: General Medicine. Sip ORS electrolyte fluids continuously.';
+            $voice_summary_ta = 'உணவு நச்சு அல்லது தொடர் வாந்தி மற்றும் வயிற்றுப்போக்கு கண்டறியப்பட்டுள்ளது. பரிந்துரைக்கப்பட்ட துறை: பொது மருத்துவம். ஓ.ஆர்.எஸ் (ORS) கரைசல் அல்லது உப்பு சர்க்கரை கரைசலை சிறிது சிறிதாக குடிக்கவும்.';
+
+        // 10. Fever & Infections
+        } elseif ($containsAny(['fever', 'infection', 'flu', 'chills', 'shivering', 'dengue', 'platelet', 'temperature', 'காய்ச்சல்', 'நடுக்கம்', 'டெங்கு', 'kaichal', 'nadukkam'])) {
+            $possible_condition = 'Acute Febrile Syndrome / Systemic Viral Infection';
+            $emergency_severity = 'Low';
+            $triage_level = 'Level 4 - Low (Non-Urgent)';
+            $risk_score = 35;
+            $recommended_department = 'General Medicine';
+            $recommended_tests = ['Complete Blood Count', 'C-Reactive Protein (CRP)', 'Dengue NS1 Antigen Panel'];
+            $first_aid = [
+                'Apply cool water sponges to forehead and neck.',
+                'Administer oral antipyretic (Paracetamol) as guided.',
+                'Maintain high fluid intake and bed rest.'
+            ];
+            $voice_summary_en = 'Febrile condition detected: High Fever or Viral Infection. Recommended department: General Medicine. Take adequate fluids, sponge with cool water, and consult physician.';
+            $voice_summary_ta = 'காய்ச்சல் அல்லது வைரஸ் தொற்று கண்டறியப்பட்டுள்ளது. பரிந்துரைக்கப்பட்ட துறை: பொது மருத்துவம். நெற்றியில் குளிர்ந்த நீர் ஒத்தடம் கொடுக்கவும், அதிக தண்ணீர் குடிக்கவும்.';
         }
 
         return [
@@ -192,7 +253,9 @@ class GeminiService
             'risk_score' => $risk_score,
             'recommended_department' => $recommended_department,
             'recommended_tests' => $recommended_tests,
-            'first_aid' => $first_aid
+            'first_aid' => $first_aid,
+            'voice_summary_en' => $voice_summary_en,
+            'voice_summary_ta' => $voice_summary_ta,
         ];
     }
 }

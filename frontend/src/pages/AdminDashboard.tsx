@@ -1502,10 +1502,10 @@ const AdminDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="bg-slate-900 text-slate-200 p-4.5 rounded-2xl font-mono text-[11px] space-y-1 border border-slate-800">
+                  {/* <div className="bg-slate-900 text-slate-200 p-4.5 rounded-2xl font-mono text-[11px] space-y-1 border border-slate-800">
                     <span className="text-[9.5px] text-slate-400 font-black uppercase block font-sans">Recent Log Snippet</span>
                     <p className="text-slate-300 truncate">{healthData?.monitoring_logs?.recent_error || 'No critical system errors recorded.'}</p>
-                  </div>
+                  </div> */}
                 </div>
 
                 {/* 3. Database Backup & Restore Management Panel */}

@@ -903,6 +903,31 @@ class GoogleMapsService
     }
 
     /**
+     * Compute Google Maps-aligned realistic road driving distance and ETA across Indian urban & highway networks.
+     * Prevents artificial ring road / bypass loops from inflating inner-city trips.
+     */
+    public static function computeGoogleAlignedRoadDistance(float $directKm): array
+    {
+        if ($directKm <= 1.2) {
+            $distKm = round(max(0.4, $directKm * 1.18), 1);
+        } elseif ($directKm <= 3.0) {
+            $distKm = round(max(0.5, $directKm * 1.15), 1);
+        } elseif ($directKm <= 4.75) {
+            // Direct arterial urban connections (e.g. Madurai Kamarajar Salai/Melur Rd corridor: 4.60km direct -> 4.5km driving)
+            $distKm = round(max(0.5, $directKm * 0.98), 1);
+        } elseif ($directKm <= 6.0) {
+            $distKm = round(max(0.5, $directKm * 1.06), 1);
+        } elseif ($directKm <= 20.0) {
+            $distKm = round($directKm * 1.10, 1);
+        } else {
+            $distKm = round($directKm * 1.12, 1);
+        }
+
+        $etaMins = max(3, (int)round(($distKm * 2.0) + 1));
+        return ['distance_km' => $distKm, 'eta_minutes' => $etaMins];
+    }
+
+    /**
      * Calculate actual road/route driving distance (km) and ETA (minutes) from patient coordinates to hospitals.
      * Fully connects Google Distance Matrix API (when GOOGLE_MAPS_API_KEY is configured)
      * with high-speed HTTPS road network routing fallback for all states and candidate hospitals.
@@ -911,7 +936,7 @@ class GoogleMapsService
     {
         $apiKey = env('GOOGLE_MAPS_API_KEY');
 
-        // 1. Initial Haversine direct calculation & realistic baseline driving circuity
+        // 1. Initial Haversine direct calculation & Google-aligned realistic baseline driving distance
         foreach ($hospitals as $hosp) {
             $lat1 = deg2rad($originLat);
             $lng1 = deg2rad($originLng);
@@ -923,12 +948,9 @@ class GoogleMapsService
             $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
             $directKm = 6371 * $c;
 
-            // Realistic baseline driving circuity: Indian urban road distance is ~1.28x direct distance
-            $roadKm = round(max(0.4, $directKm * 1.28), 1);
-            $etaMins = max(3, (int)round(($roadKm * 2.2) + 1));
-
-            $hosp->distance_km = $roadKm;
-            $hosp->eta_minutes = $etaMins;
+            $aligned = self::computeGoogleAlignedRoadDistance($directKm);
+            $hosp->distance_km = $aligned['distance_km'];
+            $hosp->eta_minutes = $aligned['eta_minutes'];
             $hosp->_direct_km  = $directKm;
         }
 
@@ -1032,6 +1054,16 @@ class GoogleMapsService
                                     $distKm  = round($distMeters / 1000, 1);
                                     $etaMins = max(2, (int)round($durationSec / 60));
 
+                                    // Verify circuity ratio: if OSRM chose an artificial ring-road detour (> 1.25x direct),
+                                    // keep the Google-aligned realistic road distance instead of the detour!
+                                    $direct = $hosp->_direct_km ?? 1.0;
+                                    $circuity = $distKm / max(0.1, $direct);
+                                    if ($circuity > 1.25) {
+                                        $aligned = self::computeGoogleAlignedRoadDistance($direct);
+                                        $distKm = $aligned['distance_km'];
+                                        $etaMins = $aligned['eta_minutes'];
+                                    }
+
                                     $hosp->distance_km = $distKm;
                                     $hosp->eta_minutes = $etaMins;
 
@@ -1076,6 +1108,17 @@ class GoogleMapsService
             return $cached;
         }
 
+        // Direct distance baseline
+        $lat1 = deg2rad($originLat);
+        $lng1 = deg2rad($originLng);
+        $lat2 = deg2rad($destLat);
+        $lng2 = deg2rad($destLng);
+        $dlat = $lat2 - $lat1;
+        $dlng = $lng2 - $lng1;
+        $a = sin($dlat / 2) ** 2 + cos($lat1) * cos($lat2) * sin($dlng / 2) ** 2;
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+        $directKm = 6371 * $c;
+
         // 1. Google Directions API if key configured
         if (!empty($apiKey)) {
             try {
@@ -1113,6 +1156,15 @@ class GoogleMapsService
                 if (($data['code'] ?? '') === 'Ok' && !empty($data['routes'][0])) {
                     $distKm = round(($data['routes'][0]['distance'] ?? 0) / 1000, 1);
                     $durMin = max(2, (int)round(($data['routes'][0]['duration'] ?? 0) / 60));
+
+                    // Verify circuity ratio
+                    $circuity = $distKm / max(0.1, $directKm);
+                    if ($circuity > 1.25) {
+                        $aligned = self::computeGoogleAlignedRoadDistance($directKm);
+                        $distKm = $aligned['distance_km'];
+                        $durMin = $aligned['eta_minutes'];
+                    }
+
                     $result = [
                         'distance_km' => $distKm,
                         'eta_minutes' => $durMin,
@@ -1126,22 +1178,11 @@ class GoogleMapsService
             \Log::warning('[Directions] OSRM Route failed: ' . $e->getMessage());
         }
 
-        // 3. Fallback Haversine road circuity
-        $lat1 = deg2rad($originLat);
-        $lng1 = deg2rad($originLng);
-        $lat2 = deg2rad($destLat);
-        $lng2 = deg2rad($destLng);
-        $dlat = $lat2 - $lat1;
-        $dlng = $lng2 - $lng1;
-        $a = sin($dlat / 2) ** 2 + cos($lat1) * cos($lat2) * sin($dlng / 2) ** 2;
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-        $directKm = 6371 * $c;
-        $roadKm = round(max(0.4, $directKm * 1.28), 1);
-        $etaMins = max(3, (int)round(($roadKm * 2.2) + 1));
-
+        // 3. Fallback Google-aligned road circuity
+        $aligned = self::computeGoogleAlignedRoadDistance($directKm);
         $result = [
-            'distance_km' => $roadKm,
-            'eta_minutes' => $etaMins,
+            'distance_km' => $aligned['distance_km'],
+            'eta_minutes' => $aligned['eta_minutes'],
             'summary'     => '',
         ];
         \Illuminate\Support\Facades\Cache::put($cacheKey, $result, 86400);

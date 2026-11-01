@@ -44,7 +44,7 @@ class ResponderController extends Controller
     /**
      * Get the responder profile and assigned emergency cases for the logged-in user.
      */
-    public function getProfile()
+    public function getProfile(Request $request = null)
     {
         $user = Auth::guard('api')->user();
         if (!$user) {
@@ -63,8 +63,46 @@ class ResponderController extends Controller
             ], 404);
         }
 
-        // Fetch active assigned cases for this responder or assigned hospital
-        $hospital = $responder->hospital ?: Hospital::first();
+        // Allow requesting a specific hospital view via query param if responder switches hospital in UI
+        $requestedHospId = $request ? $request->query('hospital_id') : null;
+        if ($requestedHospId) {
+            $hospital = Hospital::find($requestedHospId);
+            if ($hospital && $responder->hospital_id != $hospital->id) {
+                $responder->update(['hospital_id' => $hospital->id]);
+                $responder->refresh();
+            }
+        } else {
+            $hospital = $responder->hospital;
+        }
+
+        // If responder has no hospital assigned yet, intelligently resolve based on account mapping or fallback
+        if (!$hospital) {
+            if (preg_match('/responder(\d+)@/i', $user->email, $m)) {
+                $num = intval($m[1]);
+                $hospMap = [
+                    1 => 192, // Apollo Hospital – Madurai
+                    2 => 193, // Meenakshi Mission Hospital & Research Centre
+                    3 => 194, // Velammal Medical College Hospital – Madurai
+                    4 => 195, // Vadamalayan Hospital – Madurai
+                    5 => 196, // Devadoss Multispeciality Hospital – Madurai
+                    6 => 225, // Government Rajaji Hospital
+                    7 => 197, // Metro Care Hospital (Bangalore)
+                ];
+                if (isset($hospMap[$num])) {
+                    $hospital = Hospital::find($hospMap[$num]);
+                }
+            }
+
+            if (!$hospital) {
+                $hospital = Hospital::first();
+            }
+
+            if ($hospital) {
+                $responder->update(['hospital_id' => $hospital->id]);
+                $responder->refresh();
+            }
+        }
+
         $hospitalName = $hospital ? $hospital->name : null;
 
         $fallbackLat = $hospital ? $hospital->latitude : 9.8850;
@@ -73,10 +111,17 @@ class ResponderController extends Controller
         $ambLat = $responder->latitude ?: $fallbackLat;
         $ambLng = $responder->longitude ?: $fallbackLng;
 
-        $activeQuery = EmergencyAppointment::where(function ($q) use ($responder, $hospitalName) {
+        $activeQuery = EmergencyAppointment::where(function ($q) use ($responder, $hospital, $hospitalName) {
             $q->where('responder_id', $responder->id);
+            if ($hospital) {
+                $q->orWhere('hospital_id', $hospital->id);
+            }
             if ($hospitalName) {
                 $q->orWhere('hospital_name', $hospitalName);
+                $coreName = trim(explode('–', explode('-', explode('&', $hospitalName)[0])[0])[0]);
+                if (strlen($coreName) >= 4) {
+                    $q->orWhere('hospital_name', 'like', "%{$coreName}%");
+                }
             }
         })->whereNotIn('status', ['Completed', 'Cancelled']);
 
@@ -96,19 +141,27 @@ class ResponderController extends Controller
             // Compute distance from Ambulance -> Patient
             $routeToPatient = $this->computeDistanceAndEta($currentAmbLat, $currentAmbLng, $patientLat, $patientLng);
 
-            // Compute distance from Patient -> Hospital
-            $targetHospName = $case->hospital_name ?: ($hospital ? $hospital->name : 'Unassigned Hospital');
-            $hospLat = $hospital ? $hospital->latitude : $patientLat;
-            $hospLng = $hospital ? $hospital->longitude : $patientLng;
-
-            // Look up target hospital coordinates if case has specific hospital
-            if ($case->hospital_name && (!$hospital || $hospital->name !== $case->hospital_name)) {
-                $matchedHosp = Hospital::where('name', $case->hospital_name)->first();
-                if ($matchedHosp) {
-                    $hospLat = $matchedHosp->latitude;
-                    $hospLng = $matchedHosp->longitude;
+            // Target Hospital for this specific emergency case
+            $caseHosp = null;
+            if ($case->hospital_id) {
+                $caseHosp = Hospital::find($case->hospital_id);
+            }
+            if (!$caseHosp && $case->hospital_name) {
+                $caseHosp = Hospital::where('name', $case->hospital_name)->first();
+                if (!$caseHosp) {
+                    $coreName = trim(explode('–', explode('-', explode('&', $case->hospital_name)[0])[0])[0]);
+                    if (strlen($coreName) >= 4) {
+                        $caseHosp = Hospital::where('name', 'like', "%{$coreName}%")->first();
+                    }
                 }
             }
+            if (!$caseHosp) {
+                $caseHosp = $hospital;
+            }
+
+            $targetHospName = $caseHosp ? $caseHosp->name : ($case->hospital_name ?: ($hospital ? $hospital->name : 'Emergency Center'));
+            $hospLat = $caseHosp ? $caseHosp->latitude : ($hospital ? $hospital->latitude : $patientLat);
+            $hospLng = $caseHosp ? $caseHosp->longitude : ($hospital ? $hospital->longitude : $patientLng);
 
             $routeToHospital = $this->computeDistanceAndEta($patientLat, $patientLng, $hospLat, $hospLng);
 
@@ -136,10 +189,17 @@ class ResponderController extends Controller
         });
 
         // Fetch completed cases history
-        $historyQuery = EmergencyAppointment::where(function ($q) use ($responder, $hospitalName) {
+        $historyQuery = EmergencyAppointment::where(function ($q) use ($responder, $hospital, $hospitalName) {
             $q->where('responder_id', $responder->id);
+            if ($hospital) {
+                $q->orWhere('hospital_id', $hospital->id);
+            }
             if ($hospitalName) {
                 $q->orWhere('hospital_name', $hospitalName);
+                $coreName = trim(explode('–', explode('-', explode('&', $hospitalName)[0])[0])[0]);
+                if (strlen($coreName) >= 4) {
+                    $q->orWhere('hospital_name', 'like', "%{$coreName}%");
+                }
             }
         })->whereIn('status', ['Completed', 'Cancelled']);
 
@@ -159,10 +219,17 @@ class ResponderController extends Controller
 
         // Calculate statistics strictly from database
         $activeCount = count($activeCases);
-        $todayCount = EmergencyAppointment::where(function ($q) use ($responder, $hospitalName) {
+        $todayCount = EmergencyAppointment::where(function ($q) use ($responder, $hospital, $hospitalName) {
             $q->where('responder_id', $responder->id);
+            if ($hospital) {
+                $q->orWhere('hospital_id', $hospital->id);
+            }
             if ($hospitalName) {
                 $q->orWhere('hospital_name', $hospitalName);
+                $coreName = trim(explode('–', explode('-', explode('&', $hospitalName)[0])[0])[0]);
+                if (strlen($coreName) >= 4) {
+                    $q->orWhere('hospital_name', 'like', "%{$coreName}%");
+                }
             }
         })->where('status', 'Completed')
           ->whereDate('updated_at', date('Y-m-d'))
@@ -182,7 +249,7 @@ class ResponderController extends Controller
                 'hospital_latitude' => $hospital ? $hospital->latitude : null,
                 'hospital_longitude' => $hospital ? $hospital->longitude : null,
                 'hospital' => $hospital,
-                'all_hospitals' => Hospital::all(),
+                'all_hospitals' => Hospital::select('id', 'name', 'city', 'state')->orderBy('name')->get(),
                 'availability_status' => $responder->availability_status ?: 'Available',
                 'latitude' => $ambLat,
                 'longitude' => $ambLng,
@@ -199,7 +266,7 @@ class ResponderController extends Controller
     }
 
     /**
-     * Update responder profile parameters (Availability, Ambulance state, Telemetry).
+     * Update responder profile parameters (Availability, Ambulance state, Telemetry, Hospital).
      */
     public function updateProfile(Request $request)
     {
@@ -218,6 +285,8 @@ class ResponderController extends Controller
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'ambulance_status' => 'required|string|in:Active,Inactive',
+            'hospital_id' => 'nullable|exists:hospitals,id',
+            'assigned_ambulance' => 'nullable|string|max:50',
         ]);
 
         if ($validator->fails()) {
@@ -228,14 +297,24 @@ class ResponderController extends Controller
             ], 422);
         }
 
-        $responder->update([
+        $updateData = [
             'availability_status' => $request->input('availability_status'),
             'latitude' => $request->input('latitude'),
             'longitude' => $request->input('longitude'),
             'ambulance_status' => $request->input('ambulance_status'),
-        ]);
+        ];
 
-        return $this->getProfile();
+        if ($request->filled('hospital_id')) {
+            $updateData['hospital_id'] = $request->input('hospital_id');
+        }
+
+        if ($request->filled('assigned_ambulance')) {
+            $updateData['assigned_ambulance'] = $request->input('assigned_ambulance');
+        }
+
+        $responder->update($updateData);
+
+        return $this->getProfile($request);
     }
 
     /**

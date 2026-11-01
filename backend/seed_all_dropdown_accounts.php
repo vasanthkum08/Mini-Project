@@ -120,24 +120,29 @@ foreach ($responderEmails as $rEmail => $hosp) {
         ]);
     }
 
+    $ambNo = sprintf('TN-59-AM-%04d', 1000 + $rCount);
     $respRec = Responder::where('user_id', $rUser->id)->first();
     if (!$respRec) {
         $respRec = Responder::create([
             'user_id' => $rUser->id,
-            'responder_name' => "Ambulance Unit {$rCount}",
-            'phone_number' => "990000300" . $rCount,
+            'hospital_id' => $hosp->id,
+            'assigned_ambulance' => $ambNo,
+            'ambulance_status' => 'Active',
             'availability_status' => 'Available',
-            'current_latitude' => $hosp->latitude,
-            'current_longitude' => $hosp->longitude
+            'latitude' => $hosp->latitude,
+            'longitude' => $hosp->longitude
         ]);
     } else {
         $respRec->update([
+            'hospital_id' => $hosp->id,
+            'assigned_ambulance' => $ambNo,
+            'ambulance_status' => 'Active',
             'availability_status' => 'Available',
-            'current_latitude' => $hosp->latitude,
-            'current_longitude' => $hosp->longitude
+            'latitude' => $hosp->latitude,
+            'longitude' => $hosp->longitude
         ]);
     }
-    echo "  - {$rEmail} -> Ambulance Unit {$rCount} at {$hosp->name} (RoleID: {$rUser->role_id})\n";
+    echo "  - {$rEmail} -> Ambulance Unit {$rCount} at {$hosp->name} (RoleID: {$rUser->role_id}, HospID: {$hosp->id})\n";
     $rCount++;
 }
 

@@ -80,6 +80,11 @@ const ResponderDashboard: React.FC = () => {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Multi-Hospital selector states
+  const [allHospitals, setAllHospitals] = useState<any[]>([]);
+  const [selectedHospitalId, setSelectedHospitalId] = useState<number | string>('');
+  const [switchingHospital, setSwitchingHospital] = useState(false);
+
   // Telemetry / Status states
   const [availabilityStatus, setAvailabilityStatus] = useState<string>('Available');
   const [ambulanceStatus, setAmbulanceStatus] = useState<string>('Active');
@@ -88,11 +93,13 @@ const ResponderDashboard: React.FC = () => {
   const [resolvingGps, setResolvingGps] = useState(false);
   const [activeTab, setActiveTab] = useState<'dispatch' | 'history'>('dispatch');
 
-  const fetchResponderProfile = async () => {
+  const fetchResponderProfile = async (hospitalId?: number | string) => {
     setLoading(true);
     setFetchError(null);
     try {
-      const res = await api.get('/responder/profile');
+      const res = await api.get('/responder/profile', {
+        params: hospitalId ? { hospital_id: hospitalId } : {}
+      });
       if (res.data.success) {
         const data = res.data.data;
         setResponder(data);
@@ -104,12 +111,45 @@ const ResponderDashboard: React.FC = () => {
         setLongitude(data.longitude !== null && data.longitude !== undefined ? String(data.longitude) : String(hospLng));
         setAssignedCases(data.assigned_cases || []);
         setCaseHistory(data.case_history || []);
+        setAllHospitals(data.all_hospitals || []);
+        if (data.hospital?.id) {
+          setSelectedHospitalId(data.hospital.id);
+        }
       }
     } catch (err: any) {
       console.error(err);
       setFetchError(err.response?.data?.message || 'Failed to load assigned responder profile.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSwitchHospital = async (newHospId: number | string) => {
+    if (!newHospId || newHospId === selectedHospitalId) return;
+    setSwitchingHospital(true);
+    setError(null);
+    try {
+      setSelectedHospitalId(newHospId);
+      const res = await api.put('/responder/profile', {
+        availability_status: availabilityStatus,
+        ambulance_status: ambulanceStatus,
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        hospital_id: newHospId
+      });
+      if (res.data.success) {
+        const data = res.data.data;
+        setResponder(data);
+        setAssignedCases(data.assigned_cases || []);
+        setCaseHistory(data.case_history || []);
+        setSuccessMsg(`Switched assigned hospital to ${data.assigned_hospital} successfully.`);
+        setTimeout(() => setSuccessMsg(null), 4000);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.response?.data?.message || 'Failed to switch hospital.');
+    } finally {
+      setSwitchingHospital(false);
     }
   };
 
@@ -225,7 +265,7 @@ const ResponderDashboard: React.FC = () => {
     }
   };
 
-  // Update responder telemetry coordinates
+  // Update responder telemetry coordinates & assigned hospital
   const handleUpdateTelemetry = async (e: React.FormEvent) => {
     e.preventDefault();
     setUpdatingTelemetry(true);
@@ -237,13 +277,14 @@ const ResponderDashboard: React.FC = () => {
         ambulance_status: ambulanceStatus,
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null,
+        hospital_id: selectedHospitalId || null,
       });
       if (res.data.success) {
         const data = res.data.data;
         setResponder(data);
         setAssignedCases(data.assigned_cases || []);
         setCaseHistory(data.case_history || []);
-        setSuccessMsg('Telemetry coordinates and availability saved to MySQL successfully.');
+        setSuccessMsg('Telemetry coordinates, availability and hospital saved to MySQL successfully.');
         setTimeout(() => setSuccessMsg(null), 4000);
       }
     } catch (err: any) {
@@ -503,9 +544,36 @@ const ResponderDashboard: React.FC = () => {
                         Responder Officer
                       </span>
                     </div>
-                    <div className="flex flex-wrap gap-4 text-xs font-semibold text-slate-300 mt-1">
+                    <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-300 mt-1.5">
                       <span>📞 {responder.mobile}</span>
-                      <span>🏥 {responder.assigned_hospital}</span>
+
+                      {/* Interactive Hospital Selector */}
+                      <div className="flex items-center gap-1.5 bg-white/10 hover:bg-white/15 px-3 py-1 rounded-xl border border-white/20 transition-all">
+                        <span className="text-[10px] font-black uppercase text-emerald-300 flex items-center gap-1">
+                          🏥 Hospital:
+                        </span>
+                        <select
+                          value={selectedHospitalId}
+                          onChange={(e) => handleSwitchHospital(e.target.value)}
+                          disabled={switchingHospital}
+                          className="bg-transparent text-xs font-black text-white focus:outline-none cursor-pointer [&>option]:text-slate-900 [&>option]:bg-white max-w-[200px] sm:max-w-[280px] truncate"
+                          title="Click to switch your responder unit's assigned emergency hospital"
+                        >
+                          {allHospitals.length > 0 ? (
+                            allHospitals.map((h: any) => (
+                              <option key={h.id} value={h.id}>
+                                {h.name} ({h.city})
+                              </option>
+                            ))
+                          ) : (
+                            <option value={responder.hospital?.id || ''}>
+                              {responder.assigned_hospital}
+                            </option>
+                          )}
+                        </select>
+                        {switchingHospital && <RefreshCw className="h-3 w-3 animate-spin text-emerald-400 shrink-0" />}
+                      </div>
+
                       <span>🚑 Vehicle: <strong className="text-emerald-400 font-black">{responder.assigned_ambulance}</strong></span>
                     </div>
                   </div>
@@ -674,7 +742,7 @@ const ResponderDashboard: React.FC = () => {
 
               <button
                 type="button"
-                onClick={fetchResponderProfile}
+                onClick={() => fetchResponderProfile()}
                 className="p-2.5 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-slate-600" /> Refresh Cases
@@ -926,8 +994,23 @@ const ResponderDashboard: React.FC = () => {
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs font-bold">
-                
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-xs font-bold">
+
+                <div className="bg-slate-50/50 border border-slate-150 rounded-2xl p-5 space-y-3">
+                  <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Assigned Hospital</span>
+                  <select
+                    value={selectedHospitalId}
+                    onChange={(e) => setSelectedHospitalId(e.target.value)}
+                    className="w-full border border-slate-200 bg-white rounded-xl p-3 text-xs font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  >
+                    {allHospitals.map((h: any) => (
+                      <option key={h.id} value={h.id}>
+                        {h.name} ({h.city})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="bg-slate-50/50 border border-slate-150 rounded-2xl p-5 space-y-3">
                   <span className="text-[10px] text-slate-400 font-black uppercase tracking-wider block">Intake Availability</span>
                   <select

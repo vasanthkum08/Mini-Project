@@ -13,7 +13,30 @@ import {
   Calendar,
   CheckCircle2,
   Camera,
+  Mic,
+  Volume2,
+  Volume1,
+  Languages,
+  Play,
+  Square,
+  Search,
+  Check,
+  Plus,
+  RotateCcw,
+  HelpCircle,
+  VolumeX,
 } from "lucide-react";
+import {
+  BrowserSpeechRecognizer,
+  isSpeechRecognitionSupported,
+  speakAloud,
+  stopSpeech,
+} from "../utils/speechHelper";
+import {
+  SYMPTOM_CATALOG,
+  SYMPTOM_CATEGORIES,
+  type SymptomItem,
+} from "../data/symptomCatalog";
 
 interface Hospital {
   id: number;
@@ -42,22 +65,6 @@ interface Hospital {
   ambulance_available?: boolean;
   specialties?: string[];
 }
-
-const commonSymptoms = [
-  "Chest Pain",
-  "Heart Attack",
-  "Stroke",
-  "Fever",
-  "Breathing Difficulty",
-  "Accident",
-  "Fracture",
-  "Bleeding",
-  "Burns",
-  "Pregnancy Emergency",
-  "Food Poisoning",
-  "Snake Bite",
-  "Others",
-];
 
 const INDIAN_STATES_CITIES: Record<string, string[]> = {
   "Tamil Nadu": ["Madurai", "Thiruparankundram", "Chennai", "Coimbatore", "Trichy", "Salem", "Tirunelveli", "Vellore", "Erode", "Thanjavur"],
@@ -199,7 +206,198 @@ const PatientDashboard: React.FC = () => {
     emergency_severity: "Low" | "Medium" | "High";
     recommended_department: string;
     first_aid: string[];
+    voice_summary_en?: string;
+    voice_summary_ta?: string;
   } | null>(null);
+
+  // Voice & Accessibility states (Speech-to-Text & Text-to-Speech)
+  const [isListening, setIsListening] = useState(false);
+  const [speechInterimText, setSpeechInterimText] = useState("");
+  const [voiceLang, setVoiceLang] = useState<"ta-IN" | "en-IN">("ta-IN");
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [audioVoiceLang, setAudioVoiceLang] = useState<"ta" | "en">("ta");
+  const [speechError, setSpeechError] = useState<string | null>(null);
+
+  // Symptom Catalog & Identification states
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [symptomSearchQuery, setSymptomSearchQuery] = useState("");
+  const [selectedSymptomIds, setSelectedSymptomIds] = useState<string[]>([]);
+  const [showGuidedBuilder, setShowGuidedBuilder] = useState(false);
+  const [builderBodyPart, setBuilderBodyPart] = useState("Chest (மார்பு)");
+  const [builderPainType, setBuilderPainType] = useState("Severe Tightness / Crushing (கடுமையான இறுக்கம்)");
+  const [builderDuration, setBuilderDuration] = useState("Sudden / Past 1 hour (திடீரென தொடங்கியது)");
+
+  const speechRecognizerRef = React.useRef<BrowserSpeechRecognizer | null>(null);
+
+  // Initialize SpeechRecognizer
+  React.useEffect(() => {
+    if (isSpeechRecognitionSupported()) {
+      speechRecognizerRef.current = new BrowserSpeechRecognizer({
+        lang: voiceLang,
+        onStart: () => {
+          setIsListening(true);
+          setSpeechError(null);
+        },
+        onResult: (transcript, isFinal) => {
+          setSpeechInterimText(transcript);
+          if (isFinal) {
+            setSymptoms((prev) => (prev ? prev + ", " + transcript : transcript));
+            setSpeechInterimText("");
+          }
+        },
+        onError: (errMsg) => {
+          setIsListening(false);
+          setSpeechInterimText("");
+          setSpeechError(errMsg);
+          setTimeout(() => setSpeechError(null), 6000);
+        },
+        onEnd: () => {
+          setIsListening(false);
+          setSpeechInterimText("");
+        },
+      });
+    }
+
+    return () => {
+      if (speechRecognizerRef.current) {
+        speechRecognizerRef.current.stop();
+      }
+      stopSpeech();
+    };
+  }, [voiceLang]);
+
+  const toggleVoiceRecording = () => {
+    setSpeechError(null);
+    if (!isSpeechRecognitionSupported()) {
+      setSpeechError(
+        "Voice recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge."
+      );
+      return;
+    }
+    if (isListening) {
+      speechRecognizerRef.current?.stop();
+      setIsListening(false);
+      setSpeechInterimText("");
+    } else {
+      stopSpeech();
+      setIsSpeaking(false);
+      speechRecognizerRef.current?.start();
+    }
+  };
+
+  const handleVoiceGuide = () => {
+    if (isSpeaking) {
+      stopSpeech();
+      setIsSpeaking(false);
+      return;
+    }
+    const guideTa =
+      "வணக்கம். உங்கள் உடல்நிலை அல்லது அவசர அறிகுறிகளை மைக் பட்டனை அழுத்தி தமிழில் பேசலாம். அல்லது கீழே உள்ள கார்டுகளில் உங்கள் அறிகுறியைத் தேர்ந்தெடுக்கவும். நெஞ்சு வலி, விபத்து, மூச்சுத் திணறல் போன்ற அவசர நிலைகளுக்கு உடனடியாக மருத்துவமனை உதவி வழங்கப்படும்.";
+    const guideEn =
+      "Hello. You can speak your symptoms by clicking the microphone button, or choose from the symptom categories below. Emergency conditions like chest pain, breathing difficulty, or accidents will be prioritized immediately.";
+
+    const textToSpeak = audioVoiceLang === "ta" ? guideTa : guideEn;
+    speakAloud(textToSpeak, audioVoiceLang, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false),
+    });
+  };
+
+  const handleReadCurrentSymptoms = () => {
+    if (isSpeaking) {
+      stopSpeech();
+      setIsSpeaking(false);
+      return;
+    }
+    if (!symptoms.trim()) {
+      const msg = audioVoiceLang === "ta" ? "அறிகுறிகள் எதுவும் இன்னும் எழுதப்படவில்லை." : "No symptoms have been entered yet.";
+      speakAloud(msg, audioVoiceLang, {
+        onStart: () => setIsSpeaking(true),
+        onEnd: () => setIsSpeaking(false),
+        onError: () => setIsSpeaking(false),
+      });
+      return;
+    }
+    const introTa = "நீங்கள் உள்ளிட்ட அறிகுறிகள்: " + symptoms;
+    const introEn = "Your entered symptoms: " + symptoms;
+    speakAloud(audioVoiceLang === "ta" ? introTa : introEn, audioVoiceLang, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false),
+    });
+  };
+
+  const handleReadTriageResults = () => {
+    if (!aiResult) return;
+    if (isSpeaking) {
+      stopSpeech();
+      setIsSpeaking(false);
+      return;
+    }
+
+    const speechText =
+      audioVoiceLang === "ta"
+        ? (aiResult.voice_summary_ta ||
+          `மருத்துவ அறிக்கையின் விவரங்கள். கண்டறியப்பட்ட நிலை: ${aiResult.possible_condition}. ஆபத்து நிலை: ${
+            aiResult.emergency_severity === "High"
+              ? "உயிர் காக்கும் அதி தீவிர அவசரம்"
+              : aiResult.emergency_severity === "Medium"
+              ? "நடுத்தர அவசரம்"
+              : "பொதுவான நிலை"
+          }. பரிந்துரைக்கப்பட்ட துறை: ${aiResult.recommended_department}. முதலுதவி குறிப்புகள்: ${aiResult.first_aid.join(". ")}.`)
+        : (aiResult.voice_summary_en ||
+          `Clinical Diagnostic Summary. Possible condition: ${aiResult.possible_condition}. Emergency severity: ${aiResult.emergency_severity}. Recommended department: ${aiResult.recommended_department}. First aid guidelines: ${aiResult.first_aid.join(". ")}.`);
+
+    speakAloud(speechText, audioVoiceLang, {
+      onStart: () => setIsSpeaking(true),
+      onEnd: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false),
+    });
+  };
+
+  const handleSelectSymptomItem = (item: SymptomItem) => {
+    const isSelected = selectedSymptomIds.includes(item.id);
+    setSelectedSymptomIds((prev) =>
+      isSelected ? prev.filter((id) => id !== item.id) : [...prev, item.id]
+    );
+
+    if (!isSelected) {
+      setSymptoms((prev) => {
+        if (prev.includes(item.clinicalText) || prev.includes(item.titleEn)) {
+          return prev;
+        }
+        return prev ? `${prev}, ${item.clinicalText}` : item.clinicalText;
+      });
+    }
+  };
+
+  const handleApplyGuidedBuilder = () => {
+    const built = `Acute discomfort in the ${builderBodyPart} with ${builderPainType}, onset ${builderDuration}.`;
+    setSymptoms((prev) => (prev ? `${prev}, ${built}` : built));
+    setShowGuidedBuilder(false);
+  };
+
+  const filteredSymptoms = React.useMemo(() => {
+    return SYMPTOM_CATALOG.filter((item) => {
+      const matchesCategory =
+        selectedCategory === "all" ||
+        item.category === selectedCategory ||
+        (selectedCategory === "critical" && item.severity === "High");
+
+      if (!symptomSearchQuery.trim()) return matchesCategory;
+
+      const q = symptomSearchQuery.toLowerCase().trim();
+      const matchesSearch =
+        item.titleEn.toLowerCase().includes(q) ||
+        item.titleTa.toLowerCase().includes(q) ||
+        item.descriptionEn.toLowerCase().includes(q) ||
+        item.descriptionTa.toLowerCase().includes(q) ||
+        item.keywords.some((k) => k.toLowerCase().includes(q));
+
+      return matchesCategory && matchesSearch;
+    });
+  }, [selectedCategory, symptomSearchQuery]);
 
   // Location and search states
   const [locOption, setLocOption] = useState<"gps" | "manual" | null>(null);
@@ -226,19 +424,6 @@ const PatientDashboard: React.FC = () => {
 
   // Error handling
   const [error, setError] = useState<string | null>(null);
-
-  const handleChipClick = (symptom: string) => {
-    if (symptom === "Others") {
-      setSymptoms(
-        (prev) => prev + (prev ? ", " : "") + "Custom symptom details...",
-      );
-      return;
-    }
-    setSymptoms((prev) => {
-      if (prev.toLowerCase().includes(symptom.toLowerCase())) return prev;
-      return prev + (prev ? ", " : "") + symptom;
-    });
-  };
 
   const handleRunAIAnalysis = async (e?: React.SyntheticEvent) => {
     if (e && e.preventDefault) e.preventDefault();
@@ -292,6 +477,7 @@ const PatientDashboard: React.FC = () => {
     setError(null);
     setLocOption("gps");
     setFetchingGps(true);
+    lastRequestParamsRef.current = "";
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -323,7 +509,7 @@ const PatientDashboard: React.FC = () => {
           );
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   };
 
@@ -348,6 +534,40 @@ const PatientDashboard: React.FC = () => {
       "burns",
       "pregnancy emergency",
       "unconscious",
+      "fast",
+      "cardiac",
+      "choking",
+      "hemorrhage",
+      "trauma",
+      "dengue",
+      "நெஞ்சு",
+      "இதயம்",
+      "மாரடைப்பு",
+      "படபடப்பு",
+      "மூச்சு",
+      "சுவாசம்",
+      "விபத்து",
+      "காயம்",
+      "ரத்தம்",
+      "இரத்தம்",
+      "மயக்கம்",
+      "சுயநினைவு",
+      "பாம்பு",
+      "விஷம்",
+      "பிரசவம்",
+      "கர்ப்பம்",
+      "எலும்பு",
+      "முறிவு",
+      "தீக்காயம்",
+      "nenju",
+      "maradaippu",
+      "moochu",
+      "vibathu",
+      "ratham",
+      "mayakkam",
+      "paambu",
+      "elumbu",
+      "theekayam",
     ];
     const isEmergencySymptom = emergencyKeywords.some((kw) =>
       symptoms.toLowerCase().includes(kw),
@@ -1447,18 +1667,62 @@ const PatientDashboard: React.FC = () => {
         {/* Left Column: Symptoms Intake (col-span-12 md:col-span-6 lg:col-span-5) */}
         <div className="col-span-12 md:col-span-6 lg:col-span-5 space-y-6">
           {/* AI Clinical assistant panel */}
-          <div className="healthcare-card-shadow bg-white rounded-3xl p-8 md:p-10 border border-slate-100 space-y-7 transition-all duration-300">
-            <div className="flex items-center gap-3.5 pb-4 border-b border-slate-100">
-              <div className="h-11 w-11 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100 shrink-0">
-                <Stethoscope className="h-5.5 w-5.5" />
+          <div className="healthcare-card-shadow bg-white rounded-3xl p-7 md:p-8 border border-slate-100 space-y-6 transition-all duration-300">
+            {/* Header with Audio Voice Guide and Language Selector */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100 shrink-0">
+                  <Stethoscope className="h-5.5 w-5.5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-slate-800 tracking-tight">
+                    AI Hospital Assistant
+                  </h2>
+                  <p className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider">
+                    Clinical Symptoms Triage
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-base font-black text-slate-800 tracking-tight">
-                  AI Hospital Assistant
-                </h2>
-                <p className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider">
-                  Symptoms Triage Panel
-                </p>
+
+              {/* Voice Guide Button for Non-Readers */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleVoiceGuide}
+                  title="Listen to audio instructions in chosen language"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs ${
+                    isSpeaking
+                      ? "bg-rose-50 text-rose-600 border border-rose-200 animate-pulse"
+                      : "bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60"
+                  }`}
+                >
+                  {isSpeaking ? (
+                    <VolumeX className="h-4 w-4" />
+                  ) : (
+                    <Volume2 className="h-4 w-4" />
+                  )}
+                  <span>
+                    {isSpeaking
+                      ? "Stop Audio"
+                      : audioVoiceLang === "ta"
+                      ? "🔊 குரல் வழிகாட்டல்"
+                      : "🔊 Voice Guide"}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = audioVoiceLang === "ta" ? "en" : "ta";
+                    setAudioVoiceLang(next);
+                    setVoiceLang(next === "ta" ? "ta-IN" : "en-IN");
+                  }}
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center gap-1 border border-slate-200/60"
+                  title="Switch Language"
+                >
+                  <Languages className="h-3.5 w-3.5 text-blue-600" />
+                  {audioVoiceLang === "ta" ? "தமிழ்" : "English"}
+                </button>
               </div>
             </div>
 
@@ -1472,7 +1736,7 @@ const PatientDashboard: React.FC = () => {
             )}
 
             {/* Auto-filled Emergency Mobile Block */}
-            <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4.5 flex justify-between items-center text-xs font-semibold text-slate-655">
+            <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 flex justify-between items-center text-xs font-semibold text-slate-655">
               <div>
                 <span className="text-[9px] text-slate-400 font-bold uppercase block leading-none mb-1">
                   Registered Contact Mobile
@@ -1486,39 +1750,381 @@ const PatientDashboard: React.FC = () => {
               </span>
             </div>
 
+            {/* Voice Input Section for Illiterate / Non-readers & Emergency Speaking */}
+            <div className="bg-gradient-to-br from-indigo-50/70 via-blue-50/40 to-slate-50 border border-blue-200/80 rounded-2xl p-4.5 space-y-3.5 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`h-9 w-9 rounded-xl flex items-center justify-center shadow-xs ${
+                      isListening
+                        ? "bg-rose-500 text-white animate-pulse"
+                        : "bg-blue-600 text-white"
+                    }`}
+                  >
+                    <Mic className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-black text-slate-800 block">
+                      {voiceLang === "ta-IN"
+                        ? "🎙️ குரல் மூலம் அறிகுறிகளைச் சொல்லுங்கள்"
+                        : "🎙️ Speak Your Symptoms Aloud"}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-semibold block">
+                      {voiceLang === "ta-IN"
+                        ? "படிக்கத் தெரியாதவர்கள் மைக்கை அழுத்தி நேரடியாகப் பேசலாம்"
+                        : "For non-readers or hands-free voice input"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Mic Language Selector */}
+                <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoiceLang("ta-IN");
+                      setAudioVoiceLang("ta");
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                      voiceLang === "ta-IN"
+                        ? "bg-blue-600 text-white shadow-2xs"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    தமிழ்
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoiceLang("en-IN");
+                      setAudioVoiceLang("en");
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                      voiceLang === "en-IN"
+                        ? "bg-blue-600 text-white shadow-2xs"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+
+              {/* Big Speak Button */}
+              <button
+                type="button"
+                onClick={toggleVoiceRecording}
+                className={`w-full py-3.5 rounded-2xl text-xs font-black flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-md ${
+                  isListening
+                    ? "bg-rose-600 hover:bg-rose-700 text-white animate-pulse ring-4 ring-rose-200"
+                    : "bg-slate-900 hover:bg-blue-600 text-white hover:shadow-lg hover:scale-[1.01]"
+                }`}
+              >
+                {isListening ? (
+                  <>
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+                    </span>
+                    <span>
+                      {voiceLang === "ta-IN"
+                        ? "🔴 கேட்கிறது... இப்போது பேசவும் (நிறுத்த கிளிக் செய்க)"
+                        : "🔴 Listening... Speak now (Click to Stop)"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="h-4 w-4" />
+                    <span>
+                      {voiceLang === "ta-IN"
+                        ? "பேச இங்கே கிளிக் செய்யவும் (Click to Speak in Tamil)"
+                        : "Click to Speak Symptoms (English)"}
+                    </span>
+                  </>
+                )}
+              </button>
+
+              {/* Interim Live Transcript */}
+              {speechInterimText && (
+                <div className="bg-amber-50 border border-amber-200/90 rounded-xl p-3 flex items-start gap-2 animate-pulse">
+                  <Activity className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-900 font-bold leading-relaxed">
+                    🗣️ <span className="underline">பேசுவது:</span> "
+                    {speechInterimText}"
+                  </p>
+                </div>
+              )}
+
+              {/* Speech Error */}
+              {speechError && (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 font-bold flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0" />
+                  <span>{speechError}</span>
+                </div>
+              )}
+            </div>
+
             {/* Input symptoms description */}
             <div className="space-y-2">
-              <label className="block text-xs font-black text-slate-550 uppercase">
-                Describe your symptoms
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-black text-slate-700 uppercase tracking-tight">
+                  {audioVoiceLang === "ta"
+                    ? "உங்கள் அறிகுறிகள் (விவரம்)"
+                    : "Describe your symptoms"}
+                </label>
+                <div className="flex items-center gap-2">
+                  {symptoms && (
+                    <button
+                      type="button"
+                      onClick={handleReadCurrentSymptoms}
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100"
+                      title="Listen to what is written"
+                    >
+                      <Volume2 className="h-3.5 w-3.5" />
+                      {audioVoiceLang === "ta" ? "வாசிக்க" : "Read Aloud"}
+                    </button>
+                  )}
+                  {symptoms && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSymptoms("");
+                        setSelectedSymptomIds([]);
+                      }}
+                      className="text-[11px] font-bold text-slate-400 hover:text-rose-500 cursor-pointer flex items-center gap-0.5"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      {audioVoiceLang === "ta" ? "அழிக்க" : "Clear"}
+                    </button>
+                  )}
+                </div>
+              </div>
               <textarea
                 value={symptoms}
                 onChange={(e) => setSymptoms(e.target.value)}
-                placeholder="Please describe symptoms in detail (e.g., severe tightness in the chest, breathing difficulty, pain radiating to the left arm...)"
-                rows={7}
-                className="w-full border border-slate-200 rounded-2xl p-4.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-slate-50/30 focus:bg-white transition-all duration-300 resize-none min-h-[160px]"
+                placeholder={
+                  audioVoiceLang === "ta"
+                    ? "அறிகுறிகளை விவரிக்கவும் (எ.கா: கடுமையான நெஞ்சு வலி, மூச்சுத் திணறல், இடது கை வலி... அல்லது மேலே உள்ள மைக்கை அழுத்தி பேசவும்)"
+                    : "Please describe symptoms in detail (e.g., severe tightness in the chest, breathing difficulty, radiating left arm pain... or click mic above to speak)"
+                }
+                rows={4}
+                className="w-full border border-slate-200 rounded-2xl p-4 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-slate-50/30 focus:bg-white transition-all duration-300 resize-none min-h-[110px]"
               />
             </div>
 
-            {/* Symptom shortcuts selection */}
-            <div className="space-y-3">
-              <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
-                Quick Symptoms Shortcuts
-              </span>
-              <div className="flex flex-wrap gap-2.5 max-h-[240px] overflow-y-auto pr-1">
-                {commonSymptoms.map((sym) => (
+            {/* Visual Categorized Symptom Identifier */}
+            <div className="space-y-3.5 pt-1">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="block text-xs font-black text-slate-800 tracking-tight">
+                    {audioVoiceLang === "ta"
+                      ? "🔍 அறிகுறிகளைக் கண்டறியும் வழிகாட்டி"
+                      : "🔍 Visual Symptom Identifier"}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-semibold block">
+                    {audioVoiceLang === "ta"
+                      ? "சரியான அறிகுறிகளைத் தேர்வு செய்ய கீழே உள்ள கார்டுகளை கிளிக் செய்க"
+                      : "Click any card below to auto-fill accurate clinical descriptions"}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowGuidedBuilder((prev) => !prev)}
+                  className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/60 rounded-xl text-[10px] font-black transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                  {showGuidedBuilder
+                    ? "Close Builder"
+                    : audioVoiceLang === "ta"
+                    ? "வடிவமைக்க வழிகாட்டி"
+                    : "Step-by-Step"}
+                </button>
+              </div>
+
+              {/* Guided Symptom Builder Drawer */}
+              {showGuidedBuilder && (
+                <div className="bg-gradient-to-r from-slate-50 to-indigo-50/50 border border-indigo-100 rounded-2xl p-4 space-y-3 animate-slide-in">
+                  <span className="text-[11px] font-black text-indigo-950 uppercase tracking-wide block">
+                    Guided Symptom Assistant (உடலின் பகுதி வாரியாக)
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-500 block mb-1 uppercase">
+                        1. Body Region (பகுதி)
+                      </label>
+                      <select
+                        value={builderBodyPart}
+                        onChange={(e) => setBuilderBodyPart(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold"
+                      >
+                        <option>Chest (மார்பு / நெஞ்சு)</option>
+                        <option>Head & Brain (தலை / மூளை)</option>
+                        <option>Stomach / Abdomen (வயிறு)</option>
+                        <option>Arms & Legs (கை / கால்)</option>
+                        <option>Whole Body / Systemic (முழு உடல்)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-500 block mb-1 uppercase">
+                        2. Pain Type (வலியின் தன்மை)
+                      </label>
+                      <select
+                        value={builderPainType}
+                        onChange={(e) => setBuilderPainType(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold"
+                      >
+                        <option>
+                          Severe Tightness / Crushing (கடுமையான இறுக்கம்)
+                        </option>
+                        <option>
+                          Sharp Stabbing Pain (கடும் குத்தல் வலி)
+                        </option>
+                        <option>
+                          Heavy Bleeding / Fracture (ரத்தப்போக்கு / முறிவு)
+                        </option>
+                        <option>Burning Sensation (கடும் எரிச்சல்)</option>
+                        <option>Continuous Dull Ache (தொடர் வலி)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-500 block mb-1 uppercase">
+                        3. Onset Time (தொடங்கிய நேரம்)
+                      </label>
+                      <select
+                        value={builderDuration}
+                        onChange={(e) => setBuilderDuration(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold"
+                      >
+                        <option>
+                          Sudden / Past 1 hour (திடீரென தொடங்கியது)
+                        </option>
+                        <option>Since morning (இன்று காலை முதல்)</option>
+                        <option>Past 24 hours (கடந்த 1 நாளாக)</option>
+                        <option>Gradual / Several days (சில நாட்களாக)</option>
+                      </select>
+                    </div>
+                  </div>
                   <button
-                    key={sym}
                     type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleChipClick(sym);
-                    }}
-                    className="px-3.5 py-2.5 bg-slate-50 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-150 border border-slate-200/60 rounded-xl text-xs font-bold text-slate-605 transition-all cursor-pointer shadow-sm hover:translate-y-[-1.5px] duration-200"
+                    onClick={handleApplyGuidedBuilder}
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5"
                   >
-                    {sym}
+                    <Plus className="h-3.5 w-3.5" />
+                    {audioVoiceLang === "ta"
+                      ? "விவரத்தை அறிகுறிகளில் சேர்க்க"
+                      : "Add Structured Symptom to Box"}
+                  </button>
+                </div>
+              )}
+
+              {/* Search input for symptoms */}
+              <div className="relative">
+                <Search className="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={symptomSearchQuery}
+                  onChange={(e) => setSymptomSearchQuery(e.target.value)}
+                  placeholder={
+                    audioVoiceLang === "ta"
+                      ? "அறிகுறிகளைத் தேட (எ.கா: chest, நெஞ்சு, வலி, காய்ச்சல், accident, breath)..."
+                      : "Search symptoms (e.g. chest pain, vali, fever, breath, accident)..."
+                  }
+                  className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
+                />
+                {symptomSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSymptomSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Category Filter Pills */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px] font-bold">
+                {SYMPTOM_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer flex items-center gap-1 ${
+                      selectedCategory === cat.id
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "bg-slate-100/80 hover:bg-slate-200 text-slate-650"
+                    }`}
+                  >
+                    <span>{audioVoiceLang === "ta" ? cat.nameTa : cat.nameEn}</span>
                   </button>
                 ))}
+              </div>
+
+              {/* Cards Grid */}
+              <div className="grid grid-cols-1 gap-2.5 max-h-[300px] overflow-y-auto pr-1">
+                {filteredSymptoms.map((sym) => {
+                  const isSelected = selectedSymptomIds.includes(sym.id);
+                  return (
+                    <div
+                      key={sym.id}
+                      onClick={() => handleSelectSymptomItem(sym)}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer text-left flex items-start justify-between gap-3 ${
+                        isSelected
+                          ? "bg-blue-50/80 border-blue-400 shadow-sm ring-1 ring-blue-300"
+                          : "bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs hover:border-blue-200"
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-[8px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider ${
+                              sym.severity === "High"
+                                ? "bg-rose-100 text-rose-700 border border-rose-200"
+                                : sym.severity === "Medium"
+                                ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                : "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                            }`}
+                          >
+                            {audioVoiceLang === "ta" ? sym.badgeTa : sym.badge}
+                          </span>
+                          <h4 className="text-xs font-black text-slate-800">
+                            {sym.titleEn}
+                          </h4>
+                        </div>
+                        <p className="text-[11px] font-bold text-blue-800/90 leading-tight">
+                          {sym.titleTa}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                          {audioVoiceLang === "ta"
+                            ? sym.descriptionTa
+                            : sym.descriptionEn}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        className={`shrink-0 h-7 w-7 rounded-xl flex items-center justify-center transition-all ${
+                          isSelected
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-600"
+                        }`}
+                      >
+                        {isSelected ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Plus className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+                {filteredSymptoms.length === 0 && (
+                  <div className="p-6 text-center text-xs text-slate-400 font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    {audioVoiceLang === "ta"
+                      ? "பொருந்தும் அறிகுறிகள் எதுவும் இல்லை. உங்கள் அறிகுறிகளை மேலே உள்ள மைக்கை அழுத்தி பேசலாம்."
+                      : "No matching symptoms found. You can speak your symptoms using the microphone above."}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1586,6 +2192,74 @@ const PatientDashboard: React.FC = () => {
                 >
                   {aiResult.emergency_severity} Severity Triage
                 </span>
+              </div>
+
+              {/* Audio Listen Bar for Illiterate / Panic Patients */}
+              <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/70 to-slate-50 border border-blue-200/80 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`h-10 w-10 rounded-xl flex items-center justify-center shadow-xs ${
+                      isSpeaking
+                        ? "bg-rose-600 text-white animate-pulse"
+                        : "bg-blue-600 text-white"
+                    }`}
+                  >
+                    {isSpeaking ? (
+                      <Volume2 className="h-5 w-5" />
+                    ) : (
+                      <Volume1 className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800">
+                      {audioVoiceLang === "ta"
+                        ? "மருத்துவ அறிக்கையைக் கேட்க (Voice Audio)"
+                        : "Listen to Diagnosis & First Aid (Audio)"}
+                    </h4>
+                    <p className="text-[10px] text-slate-500 font-semibold">
+                      {audioVoiceLang === "ta"
+                        ? "படிக்கத் தெரியாதவர்களுக்காக குரல் வழியே விளக்கப்படும்"
+                        : "Voice readout of condition, severity & first aid"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setAudioVoiceLang((prev) => (prev === "ta" ? "en" : "ta"));
+                    }}
+                    className="px-2.5 py-1.5 bg-white border border-blue-200 rounded-xl text-[10px] font-black text-blue-700 flex items-center gap-1 shadow-2xs hover:bg-blue-50 cursor-pointer"
+                  >
+                    <Languages className="h-3.5 w-3.5" />
+                    {audioVoiceLang === "ta" ? "தமிழ்" : "English"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleReadTriageResults();
+                    }}
+                    className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-sm transition-all cursor-pointer ${
+                      isSpeaking
+                        ? "bg-rose-600 text-white hover:bg-rose-700 animate-pulse"
+                        : "bg-blue-600 text-white hover:bg-blue-700 hover:scale-[1.02]"
+                    }`}
+                  >
+                    {isSpeaking ? (
+                      <>
+                        <Square className="h-3.5 w-3.5" /> Stop Audio
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5" /> Play Voice (கேட்க)
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* Alert for High Priority */}
